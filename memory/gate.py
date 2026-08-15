@@ -525,19 +525,45 @@ class MemoryGate:
         normalized = _normalize(embedding)
         vec = _vec_literal(normalized)
 
+        # Two independent filters, deliberately redundant with each other —
+        # mirrors schema.sql's two separate CHECK constraints
+        # (source_integrity_consistent, capability_requires_integrity).
+        #
+        # capability_ceiling is the PRIMARY filter: it's a per-memory choice
+        # made at admit time, and may be lower than what the source's
+        # integrity would allow (e.g. a human_confirmed source can still
+        # write an informational-only memory that must never be used to
+        # justify a suppress decision). Filtering on integrity_level alone
+        # would miss this — a high-integrity, low-capability memory would
+        # wrongly leak into a high-capability retrieval.
+        #
+        # integrity_level is kept as a second, redundant filter: since
+        # capability_requires_integrity guarantees capability_ceiling can
+        # never exceed what integrity_level allows, this filter is
+        # logically implied by the first — but enforcing it independently
+        # here means a future bug in the capability_ceiling filter (or a
+        # row that somehow bypassed the CHECK) still can't leak a
+        # low-integrity belief into a high-capability decision.
+        capability_rank_case = (
+            "CASE capability_ceiling "
+            "WHEN 'informational' THEN 1 WHEN 'suppressive' THEN 2 WHEN 'actuating' THEN 3 END"
+        )
+
         if not self.gate_enabled:
             # This bypass exists ONLY to prove the attack scenario in
             # demo/attack_scenario.py Phase 3A. Never enable in a real
-            # deployment — it skips the integrity_level >= required filter
-            # entirely, which is the entire point of the lattice.
+            # deployment — it skips BOTH lattice filters entirely, which is
+            # the entire point of the lattice.
             logger.warning(
-                "PALIMPSEST_GATE_ENABLED=false — integrity filter BYPASSED on this "
-                "retrieve() call. This path exists only to demonstrate the attack; "
+                "PALIMPSEST_GATE_ENABLED=false — integrity/capability filter BYPASSED on "
+                "this retrieve() call. This path exists only to demonstrate the attack; "
                 "it must never be enabled outside the controlled demo."
             )
             min_integrity = int(Integrity.UNTRUSTED_INGEST)
+            min_capability_rank = 1
         else:
             min_integrity = int(CAPABILITY_MIN_INTEGRITY[capability])
+            min_capability_rank = int(capability)
 
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -548,10 +574,11 @@ class MemoryGate:
                            embedding <-> %s::VECTOR AS distance
                     FROM memories
                     WHERE workspace_id = %s AND status = 'active' AND integrity_level >= %s
+                          AND ({capability_rank_case}) >= %s
                     ORDER BY embedding <-> %s::VECTOR
                     LIMIT %s
                     """,
-                    (vec, workspace_id, min_integrity, vec, top_k),
+                    (vec, workspace_id, min_integrity, min_capability_rank, vec, top_k),
                 )
                 rows = cur.fetchall()
 

@@ -192,3 +192,48 @@ def test_equal_integrity_invokes_adjudicator(dsn: str, workspace_id: str):
     challenger_status, _, _ = _memory_row(dsn, challenger.memory_id)
     assert incumbent_status == "superseded"
     assert challenger_status == "active"
+
+
+def test_retrieve_excludes_informational_memory_from_suppressive_request(gate: MemoryGate, workspace_id: str):
+    """
+    Regression test for a real gap found while building the demo: a
+    human_confirmed source (integrity 4) can deliberately write an
+    informational-only memory (capability_ceiling='informational') — e.g.
+    "this host was scanned last week" is a fact worth keeping, but was
+    never meant to justify suppressing an alert on its own. Filtering
+    retrieve() on integrity_level alone would wrongly surface it for a
+    SUPPRESSIVE-capability request, since integrity 4 >= the integrity 3
+    floor for suppressive. capability_ceiling is the dimension that must
+    actually gate retrieval — see memory/gate.py retrieve()'s
+    capability_rank_case filter.
+    """
+    gate.admit(
+        workspace_id=workspace_id,
+        agent_id=None,
+        claim=Claim("ip:198.51.100.5", "scan_history", "scanned_last_week"),
+        provenance=Provenance(source_kind="human_confirmed", operator_id="bob"),
+        capability=Capability.INFORMATIONAL,  # deliberately capped below what integrity 4 would allow
+        confidence=0.9,
+        embedding=fake_embedding("198.51.100.5 scanned_last_week"),
+    )
+
+    informational_hits = gate.retrieve(
+        workspace_id=workspace_id,
+        embedding=fake_embedding("198.51.100.5 scanned_last_week"),
+        capability=Capability.INFORMATIONAL,
+        top_k=5,
+    )
+    assert any(m.subject_key == "ip:198.51.100.5" for m in informational_hits), (
+        "sanity check: the memory must be retrievable at its own capability level"
+    )
+
+    suppressive_hits = gate.retrieve(
+        workspace_id=workspace_id,
+        embedding=fake_embedding("198.51.100.5 scanned_last_week"),
+        capability=Capability.SUPPRESSIVE,
+        top_k=5,
+    )
+    assert not any(m.subject_key == "ip:198.51.100.5" for m in suppressive_hits), (
+        "an informational-ceiling memory must never surface for a suppressive-capability "
+        "retrieval, even from a high-integrity source"
+    )
