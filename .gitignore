@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+*.egg
+
+# Env
+.env
+.env.local
+
+# Node / Next.js
+node_modules/
+console/.next/
+console/out/
+console/.env*.local
+npm-debug.log*
+
+# AWS CDK
+infrastructure/cdk.out/
+infrastructure/.venv/
+infrastructure/*.egg-info/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local CockroachDB data (if run outside Docker)
+cockroach-data/
