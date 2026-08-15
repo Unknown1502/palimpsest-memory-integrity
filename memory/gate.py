@@ -715,7 +715,15 @@ class MemoryGate:
         memory_ledger instead of MVCC history.
         """
         hlc_literal = _validate_hlc(hlc)
-        with self._connect() as conn:
+        # autocommit=True, not self._connect(): a table-level AS OF SYSTEM
+        # TIME clause must be the first statement of a transaction with no
+        # timestamp already established. self._connect()'s autocommit=False
+        # connections start an implicit transaction that (confirmed
+        # empirically) can already have a timestamp assigned before this
+        # query runs, which CockroachDB then rejects as
+        # "inconsistent AS OF SYSTEM TIME timestamp". autocommit=True gives
+        # every statement its own fresh single-statement transaction.
+        with psycopg.connect(self.dsn, autocommit=True) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
