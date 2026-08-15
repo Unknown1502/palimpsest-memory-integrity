@@ -29,6 +29,7 @@ def _serialize_ref(row: dict) -> dict:
         "memory_id": str(row["memory_id"]),
         "claim": row["claim"],
         "status": row["status"],
+        "source_kind": row["source_kind"],
         "rank": row["rank"],
         "semantic_score": row["semantic_score"],
         "eff_confidence": row["eff_confidence"],
@@ -73,7 +74,7 @@ def get_decision(workspace_id: str, decision_id: str, dsn: str = Depends(get_dsn
 
             cur.execute(
                 "SELECT dmr.memory_id, dmr.rank, dmr.semantic_score, dmr.eff_confidence, "
-                "       dmr.integrity_level, dmr.total_score, dmr.influence, m.claim, m.status "
+                "       dmr.integrity_level, dmr.total_score, dmr.influence, m.claim, m.status, m.source_kind "
                 "FROM decision_memory_refs dmr JOIN memories m ON m.memory_id = dmr.memory_id "
                 "WHERE dmr.decision_id = %s ORDER BY dmr.rank",
                 (decision_id,),

@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+/*
+  Palimpsest console — forensic/SOC aesthetic, deliberately not a chat
+  window (see CONTEXT.md's demo notes). Always dark: this is an
+  operator console meant to be readable on a screen recording, not a
+  general-audience marketing surface, so there's no light-mode toggle.
+*/
+:root {
+  --bg: #0a0e14;
+  --panel: #10151f;
+  --panel-alt: #151b28;
+  --border: #232a3a;
+  --border-strong: #313b52;
+  --text: #e4e9f2;
+  --text-muted: #8b95ac;
+  --text-faint: #5b6480;
+  --accent: #4fd1e8;
+  --accent-dim: #1f5b66;
+
+  --integrity-human: #34d399;
+  --integrity-human-dim: #0f3d2c;
+  --integrity-tool: #38bdf8;
+  --integrity-tool-dim: #0c3550;
+  --integrity-inferred: #fbbf24;
+  --integrity-inferred-dim: #4a3a0c;
+  --integrity-untrusted: #f87171;
+  --integrity-untrusted-dim: #4a1616;
+
+  --status-active: #34d399;
+  --status-superseded: #6b7690;
+  --status-quarantined: #fb923c;
+  --status-revoked: #f87171;
+
+  --verdict-suppress: #38bdf8;
+  --verdict-escalate: #fb923c;
+  --verdict-allow: #34d399;
+
+  --danger: #f87171;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-panel-alt: var(--panel-alt);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-text-faint: var(--text-faint);
+  --color-accent: var(--accent);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+}
+
+code,
+.font-mono-data {
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+::selection {
+  background: var(--accent-dim);
+  color: var(--text);
+}
+
+a {
+  color: inherit;
+}
+
+/* Scrollbars matching the dark theme, so a screen recording never shows a jarring light scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 6px;
+}
