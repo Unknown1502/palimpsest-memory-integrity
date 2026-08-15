@@ -723,12 +723,19 @@ class MemoryGate:
         # query runs, which CockroachDB then rejects as
         # "inconsistent AS OF SYSTEM TIME timestamp". autocommit=True gives
         # every statement its own fresh single-statement transaction.
+        # Field list deliberately matches exactly what
+        # memory.ledger_replay.replay_state_at() can also reconstruct from
+        # memory_ledger — subject_key/predicate/object_value aren't logged
+        # separately in ledger payloads (only the combined `claim` string
+        # is), and no consumer needs that granularity today, so the two
+        # paths stay genuinely interchangeable rather than one being a
+        # superset of the other. See tests/test_ledger_integrity.py's
+        # shape-compatibility test.
         with psycopg.connect(self.dsn, autocommit=True) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
-                    SELECT memory_id, status, claim, subject_key, predicate, object_value,
-                           source_kind, integrity_level, capability_ceiling
+                    SELECT memory_id, status, claim, source_kind, integrity_level, capability_ceiling
                     FROM memories AS OF SYSTEM TIME {hlc_literal}
                     WHERE workspace_id = %s
                     """,
@@ -740,12 +747,9 @@ class MemoryGate:
                 "memory_id": str(r[0]),
                 "status": r[1],
                 "claim": r[2],
-                "subject_key": r[3],
-                "predicate": r[4],
-                "object_value": r[5],
-                "source_kind": r[6],
-                "integrity_level": r[7],
-                "capability_ceiling": r[8],
+                "source_kind": r[3],
+                "integrity_level": r[4],
+                "capability_ceiling": r[5],
             }
             for r in rows
         ]
