@@ -5,3 +5,4 @@ uvicorn[standard]>=0.29
 pydantic>=2.6
 pytest>=8.0
 httpx>=0.27
+mangum>=0.17  # ASGI-to-Lambda adapter, used only by infrastructure/lambda/gate_handler
