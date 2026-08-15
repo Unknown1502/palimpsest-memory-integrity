@@ -187,11 +187,19 @@ class TriageAgent:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO decisions (workspace_id, agent_id, alert_ref, verdict, rationale, decided_hlc)
-                    VALUES (%s, %s, %s, %s, %s, cluster_logical_timestamp())
+                    INSERT INTO decisions
+                        (workspace_id, agent_id, alert_ref, alert_payload, verdict, rationale, decided_hlc)
+                    VALUES (%s, %s, %s, %s, %s, %s, cluster_logical_timestamp())
                     RETURNING decision_id, decided_hlc
                     """,
-                    (self.workspace_id, self.agent_id, alert["alert_ref"], verdict, rationale),
+                    (
+                        self.workspace_id,
+                        self.agent_id,
+                        alert["alert_ref"],
+                        json.dumps(alert),
+                        verdict,
+                        rationale,
+                    ),
                 )
                 decision_id, decided_hlc = cur.fetchone()
                 decision_id = str(decision_id)

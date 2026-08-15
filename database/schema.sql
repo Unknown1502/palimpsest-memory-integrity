@@ -179,6 +179,11 @@ CREATE TABLE IF NOT EXISTS decisions (
     workspace_id UUID NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
     agent_id UUID NOT NULL REFERENCES agents(agent_id),
     alert_ref STRING NOT NULL,
+    -- The full alert dict TriageAgent.decide() was given (source_ip,
+    -- dest_host, signature, raw_log, ...). Required for rewind/apply to
+    -- actually replay a decision later -- alert_ref alone isn't enough to
+    -- reconstruct what triage.decide() was called with.
+    alert_payload JSONB NOT NULL DEFAULT '{}',
     verdict STRING NOT NULL CHECK (verdict IN ('suppress', 'escalate', 'allow')),
     rationale STRING NOT NULL,
     -- cluster_logical_timestamp() at decision time -- NEVER now(). This is
@@ -278,16 +283,21 @@ CREATE INDEX IF NOT EXISTS rewinds_workspace_idx ON rewinds (workspace_id, creat
 --   FROM memories AS OF SYSTEM TIME <decided_hlc>
 --   WHERE workspace_id = $1;
 --
--- Belief diff for rewind (then vs now), same shape both sides so the API
--- can serve it from either AS OF SYSTEM TIME or memory/ledger_replay.py's
--- fallback interchangeably:
+-- Belief diff for rewind (then vs now): NOT a single combined query.
+-- Confirmed empirically while building api/routes/rewind.py — CockroachDB
+-- rejects a table-level AS OF SYSTEM TIME clause nested in a subquery
+-- alongside a live-read sibling in the same statement
+-- ("AS OF SYSTEM TIME must be provided on a top-level statement"). Run as
+-- two separate top-level statements instead, and diff them in application
+-- code (see api/routes/rewind.py's create_rewind):
 --
---   SELECT then_state.memory_id,
---          then_state.status AS status_then,
---          now_state.status  AS status_now
---   FROM (SELECT memory_id, status FROM memories AS OF SYSTEM TIME <target_hlc>
---         WHERE workspace_id = $1) AS then_state
---   FULL OUTER JOIN (SELECT memory_id, status FROM memories
---                    WHERE workspace_id = $1) AS now_state
---     ON then_state.memory_id = now_state.memory_id
---   WHERE then_state.status IS DISTINCT FROM now_state.status;
+--   -- statement 1 (historical):
+--   SELECT memory_id, status, claim FROM memories AS OF SYSTEM TIME <target_hlc>
+--   WHERE workspace_id = $1;
+--
+--   -- statement 2 (current):
+--   SELECT memory_id, status, claim FROM memories WHERE workspace_id = $1;
+--
+-- Same output shape both sides so the API can serve either side from
+-- memory/ledger_replay.py's fallback interchangeably when AS OF SYSTEM
+-- TIME isn't available (GC TTL exceeded or cluster tier restriction).
