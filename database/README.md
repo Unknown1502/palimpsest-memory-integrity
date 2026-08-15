@@ -35,7 +35,7 @@ SET CLUSTER SETTING feature.vector_index.enabled = true;
 
 Run this once per cluster, before the first `database/migrate.py` run.
 
-## 5. Configure GC TTL for AS OF SYSTEM TIME rewind
+## 4. Configure GC TTL for AS OF SYSTEM TIME rewind
 
 Palimpsest's rewind feature reads historical MVCC state via
 `AS OF SYSTEM TIME`, which can only reach as far back as the table's
@@ -58,7 +58,7 @@ replay only knows what the gate chose to log; `AS OF SYSTEM TIME` knows
 everything the table ever held. Prefer the zone-config path when your
 cluster tier allows it.
 
-## 6. Apply the schema
+## 5. Apply the schema
 
 ```bash
 pip install -r requirements.txt
@@ -69,6 +69,28 @@ python database/migrate.py
 `database/migrate.py` executes `database/schema.sql` directly — every
 statement in it is `CREATE ... IF NOT EXISTS`, so running this command
 again later (after a schema change) is always safe.
+
+## 6. Backups (`ccloud` CLI)
+
+Per CONTEXT.md's cut list, backup automation is scripted and documented
+here, not wired into any code path — it doesn't need to run inside the
+demo flow. CockroachDB Cloud clusters take automatic backups, but for an
+explicit, on-demand backup via the `ccloud` CLI (install:
+`brew install cockroachdb/tap/ccloud` or see
+cockroachlabs.com/docs/cockroachcloud/ccloud-get-started):
+
+```bash
+ccloud auth login
+ccloud cluster list                       # find your cluster's ID
+ccloud backup create <cluster-id> --wait  # on-demand backup, JSON output
+ccloud backup list <cluster-id>           # confirm it landed
+```
+
+Restoring from a `ccloud`-managed backup is a Cloud Console operation
+(Cluster → Backup & Restore) or `ccloud backup restore <cluster-id>
+<backup-id>` — see `ccloud backup restore --help` for the exact flags for
+your `ccloud` version, since restore options (full cluster vs. specific
+databases/tables) are version-sensitive.
 
 ## Local development
 
@@ -92,7 +114,7 @@ This exact sequence was run against a live local cluster (v25.2.22) while
 building this repo — `database/migrate.py` applies cleanly and is
 idempotent (verified by running it twice).
 
-The DB Console is at http://localhost:8080. `CONFIGURE ZONE` (step 5) works
+The DB Console is at http://localhost:8080. `CONFIGURE ZONE` (step 4) works
 without restriction on a local insecure single-node cluster, so this is
 also the easiest way to exercise the real `AS OF SYSTEM TIME` rewind path
 end-to-end before pointing at CockroachDB Cloud.
