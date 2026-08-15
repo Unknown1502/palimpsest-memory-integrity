@@ -23,7 +23,10 @@ palimpsest/
 │   └── __init__.py
 │
 ├── agent/
+│   ├── llm.py                       Provider switch (bedrock / anthropic_api)
 │   ├── bedrock_client.py            Bedrock smoke test + shared client
+│   ├── anthropic_client.py          Direct console.anthropic.com client
+│   ├── adjudication.py              Shared tie-break prompt + parsing
 │   ├── triage.py                    TriageAgent — observe/decide/act
 │   ├── ingest.py                    Three provenance-tiered ingest paths
 │   └── __init__.py

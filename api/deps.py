@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 
-from agent.bedrock_client import adjudicate
+from agent.llm import adjudicate
 from memory.gate import MemoryGate
 
 

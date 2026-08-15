@@ -19,21 +19,34 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from typing import Optional
 
 import boto3
 
+from agent.adjudication import run_adjudication
 from memory.gate import EMBED_DIMS
 
 DEFAULT_REGION = "us-east-1"
 DEFAULT_EMBED_MODEL = "amazon.titan-embed-text-v2:0"
-DEFAULT_CLAUDE_MODEL = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+DEFAULT_CLAUDE_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 # Newer Claude models on Bedrock reject on-demand invocation by bare model
 # ID — confirmed empirically (ValidationException: "Invocation of model ID
 # ... with on-demand throughput isn't supported"). They must be invoked via
 # a cross-region inference profile ID instead (the "us." prefix above),
 # discoverable via `aws bedrock list-inference-profiles`.
+#
+# Haiku 4.5, not Sonnet 4.5: every third-party model on Bedrock has its OWN
+# separate AWS Marketplace subscription. Sonnet 4.5's subscription attempt
+# failed once with INVALID_PAYMENT_INSTRUMENT before a payment method was
+# added to the account, and kept failing on retry afterward too — that
+# specific model's subscription got stuck, not the account's ability to
+# subscribe to anything. Haiku 4.5 (never previously attempted) subscribed
+# cleanly on the first real call once the card was on file. It's also
+# well-suited to this project's actual tasks (structured JSON extraction,
+# verdict classification, adjudication — not open-ended reasoning) and
+# meaningfully cheaper, which matters against a capped, expiring credit
+# balance. Sonnet 4.5 can be re-tried later by overriding
+# PALIMPSEST_ADJUDICATOR_MODEL once/if its own subscription clears.
 
 _client = None
 
@@ -91,43 +104,17 @@ def chat(system: str, messages: list[dict], max_tokens: int = 1024) -> str:
     return "".join(block["text"] for block in payload["content"] if block["type"] == "text")
 
 
-_JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
-
-
 def adjudicate(incumbent: dict, challenger: dict) -> dict:
     """
     Bedrock-backed tie-break adjudicator, matching memory.gate.AdjudicateFn's
     signature exactly: incumbent/challenger are the small dicts memory/gate.py
     builds (memory_id, object_value, polarity, integrity_level). Both sides
-    are equal integrity — the model is the arbiter, not a formula.
+    are equal integrity — the model is the arbiter, not a formula. Prompt
+    and response parsing live in agent/adjudication.py, shared with
+    agent/anthropic_client.py's adjudicate() so both providers stay in sync.
     """
-    system = (
-        "You are adjudicating a contradiction between two equal-authority beliefs "
-        "in a security agent's memory store. Both claims are about the same subject "
-        "and predicate but assert different, incompatible values. Decide which one "
-        "should remain the trusted belief. Respond with ONLY a JSON object, no other "
-        'text: {"winner": "incumbent" or "challenger", "rationale": "<one sentence>"}'
-    )
-    user_prompt = (
-        f"Incumbent belief (currently active): {json.dumps(incumbent)}\n"
-        f"Challenger belief (just submitted): {json.dumps(challenger)}\n\n"
-        "Which should hold? Consider plausibility and specificity, not just recency."
-    )
     model_id = os.environ.get("PALIMPSEST_ADJUDICATOR_MODEL", DEFAULT_CLAUDE_MODEL)
-    raw = chat(system=system, messages=[{"role": "user", "content": user_prompt}], max_tokens=256)
-
-    match = _JSON_OBJECT_RE.search(raw)
-    if not match:
-        raise RuntimeError(f"adjudicator did not return a parseable JSON object: {raw!r}")
-    decision = json.loads(match.group(0))
-    if decision.get("winner") not in ("incumbent", "challenger"):
-        raise RuntimeError(f"adjudicator returned an invalid winner: {decision!r}")
-
-    return {
-        "winner": decision["winner"],
-        "rationale": decision.get("rationale", "(no rationale returned)"),
-        "adjudicator": f"bedrock:{model_id}",
-    }
+    return run_adjudication(chat, incumbent, challenger, adjudicator_label=f"bedrock:{model_id}")
 
 
 def smoke_test() -> None:

@@ -44,7 +44,15 @@ from constructs import Construct
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 EMBED_MODEL_ID = "amazon.titan-embed-text-v2:0"
-CLAUDE_INFERENCE_PROFILE_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+# Must match agent/bedrock_client.py's DEFAULT_CLAUDE_MODEL (or whatever
+# PALIMPSEST_ADJUDICATOR_MODEL is set to at deploy time) -- every
+# third-party model on Bedrock has its own separate AWS Marketplace
+# subscription and its own IAM resource ARN, so this stack's IAM policy
+# only grants InvokeModel on the specific model actually configured here.
+# Deploying with a different PALIMPSEST_ADJUDICATOR_MODEL than this
+# constant will get AccessDenied from IAM, not just from Marketplace.
+CLAUDE_INFERENCE_PROFILE_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+CLAUDE_MODEL_ID = "anthropic.claude-haiku-4-5-20251001-v1:0"
 
 
 class PalimpsestStack(Stack):
@@ -85,7 +93,7 @@ class PalimpsestStack(Stack):
             actions=["bedrock:InvokeModel"],
             resources=[
                 f"arn:aws:bedrock:{self.region}::foundation-model/{EMBED_MODEL_ID}",
-                f"arn:aws:bedrock:{self.region}::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0",
+                f"arn:aws:bedrock:{self.region}::foundation-model/{CLAUDE_MODEL_ID}",
                 f"arn:aws:bedrock:{self.region}:{self.account}:inference-profile/{CLAUDE_INFERENCE_PROFILE_ID}",
             ],
         )

@@ -33,7 +33,7 @@ from __future__ import annotations
 import os
 import sys
 
-from agent.bedrock_client import adjudicate, chat, embed
+from agent.llm import adjudicate, chat, embed
 from agent.ingest import ingest_ticket_comment
 from agent.triage import TriageAgent
 from demo.seed import seed, wipe

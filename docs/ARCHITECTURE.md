@@ -51,10 +51,18 @@
      never around it                                              don't allow the real thing
         |                         |
         v                         v
-[6] agent/bedrock_client.py  [7] console/ (Next.js)
-    Titan embed() + Claude        /timeline  /memories  /rewind + SQL pane
-    chat()/adjudicate() via
-    the Bedrock Messages API
+[6] agent/llm.py             [7] console/ (Next.js)
+    provider switch:               /timeline  /memories  /rewind + SQL pane
+    PALIMPSEST_LLM_PROVIDER
+    selects chat()/adjudicate()
+    from either:
+      agent/bedrock_client.py    Titan embed() always here regardless
+        (default) via the         of provider; Claude via the Bedrock
+        Bedrock Messages API      Messages API
+      agent/anthropic_client.py
+        (anthropic_api) direct
+        console.anthropic.com
+        Messages API
 
 [8] infrastructure/ (AWS CDK)
     GateHandler Lambda        api/main.py via Mangum, behind a Function URL
@@ -109,15 +117,43 @@ and change status.
 
 ### `agent/` — the thing that actually uses the gate
 
+- **`agent/llm.py`** — the provider switch. Reads
+  `PALIMPSEST_LLM_PROVIDER` (`bedrock`, the default, or `anthropic_api`)
+  and re-exports `chat()`/`adjudicate()` from whichever module backs it;
+  `embed()` always comes from `agent/bedrock_client.py` regardless of the
+  switch. Callers that need chat/adjudicate (`api/deps.py`,
+  `api/routes/rewind.py`, `demo/attack_scenario.py`) import from here, not
+  from either provider module directly, so switching providers is a
+  one-line env var change, not a per-call-site edit.
+- **`agent/adjudication.py`** — the equal-integrity tie-break prompt and
+  JSON-response parsing, shared by both provider modules' `adjudicate()`
+  so the prompt only needs to be right in one place.
 - **`agent/bedrock_client.py`** — the only module that imports `boto3`.
   `embed()` (Titan Text Embeddings V2, 1024 dims, hard-fails on a
   dimension mismatch against `memory.gate.EMBED_DIMS`), `chat()` (Claude
   via the Messages API on Bedrock — note the model ID is a cross-region
-  inference profile, `us.anthropic.claude-sonnet-4-5-...`, not the bare
-  model ID; Claude Sonnet 4.5 on Bedrock rejects on-demand invocation by
-  bare ID), `adjudicate()` (the tie-break `AdjudicateFn` `memory/gate.py`
+  inference profile, `us.anthropic.claude-haiku-4-5-...` by default, not
+  the bare model ID; newer Claude models on Bedrock reject on-demand
+  invocation by bare ID. Haiku 4.5 rather than a larger model: cheaper,
+  well-suited to this project's structured extraction/classification
+  tasks, and — found the hard way — every third-party model has its own
+  separate AWS Marketplace subscription, so a model that failed once
+  before a payment method was on file can stay stuck even after fixing
+  billing, while a never-before-attempted model subscribes cleanly),
+  `adjudicate()` (the tie-break `AdjudicateFn` `memory/gate.py`
   accepts as a plain injected callable, keeping `memory/` itself free of
   any AWS dependency).
+- **`agent/anthropic_client.py`** — the direct console.anthropic.com
+  path (`PALIMPSEST_LLM_PROVIDER=anthropic_api`), used when
+  Claude-via-Bedrock is unavailable — e.g. the Marketplace subscription
+  issue described above. Same `chat(system, messages, max_tokens)`
+  signature as `agent/bedrock_client.py`'s, so `agent/triage.py` and
+  `agent/ingest.py` — which take `chat_fn` as an injected callable —
+  need zero changes to run against either provider. `adjudicate()`
+  reuses `agent/adjudication.py`'s prompt/parsing, not a second copy.
+  Model IDs on this path are bare first-party strings (`claude-haiku-4-5`)
+  with no `us.anthropic.` prefix or `:0` suffix — that naming is
+  Bedrock-specific.
 - **`agent/ingest.py`** — three functions matching the three provenance
   tiers, each hardcoding its own `source_kind` and accepting a
   caller-specified `capability` — the LLM extraction step

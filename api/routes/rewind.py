@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from psycopg.rows import dict_row
 from pydantic import BaseModel
 
-from agent.bedrock_client import chat, embed
+from agent.llm import chat, embed
 from agent.triage import TriageAgent
 from api.deps import get_dsn, get_gate
 from memory.gate import MemoryGate

@@ -160,7 +160,7 @@ def test_equal_integrity_invokes_adjudicator(dsn: str, workspace_id: str):
         return {
             "winner": "challenger",
             "rationale": "mock Bedrock adjudicator: challenger is more specific",
-            "adjudicator": "bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0",
+            "adjudicator": "bedrock:anthropic.claude-haiku-4-5-20251001-v1:0",
         }
 
     gate = MemoryGate(dsn=dsn, adjudicate_fn=mock_adjudicate)
@@ -186,7 +186,7 @@ def test_equal_integrity_invokes_adjudicator(dsn: str, workspace_id: str):
 
     assert len(calls) == 1, "equal-integrity contradiction must invoke the adjudicator exactly once"
     assert challenger.contradiction["verdict"] == "llm_adjudicated"
-    assert challenger.contradiction["adjudicator"] == "bedrock:anthropic.claude-sonnet-4-5-20250929-v1:0"
+    assert challenger.contradiction["adjudicator"] == "bedrock:anthropic.claude-haiku-4-5-20251001-v1:0"
 
     incumbent_status, _, _ = _memory_row(dsn, incumbent.memory_id)
     challenger_status, _, _ = _memory_row(dsn, challenger.memory_id)

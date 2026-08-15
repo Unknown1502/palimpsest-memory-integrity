@@ -65,8 +65,12 @@ Built for the [CockroachDB × AWS Hackathon](https://cockroachdb-ai.devpost.com/
     TriageAgent             FastAPI service       AS OF SYSTEM TIME fallback
         |                    |
         v                    v
-[8] agent/bedrock_client.py  [9] console/ (Next.js)
-    Titan + Claude via Bedrock    /timeline /memories /rewind + SQL pane
+[8] agent/llm.py             [9] console/ (Next.js)
+    provider switch:              /timeline /memories /rewind + SQL pane
+    bedrock (default) or
+    anthropic_api -- Titan
+    embeddings always stay
+    on Bedrock either way
 
 [10] infrastructure/ (AWS CDK) -- GateHandler + LedgerExportHandler Lambdas,
      S3 with Object Lock, Secrets Manager
