@@ -166,7 +166,13 @@ and change status.
   ground truth just because it was retrieved), writes `decisions` +
   `decision_memory_refs` with the scores exactly as `gate.retrieve()`
   returned them, and routes to `approvals` instead of acting when a
-  verdict's required capability exceeds `workspace.autonomy_ceiling`.
+  verdict's required capability exceeds `workspace.autonomy_ceiling`. That
+  integrity-level labeling is itself gated on `gate.gate_enabled` — found
+  necessary by running the attack demo against a real, live Claude call:
+  with only the retrieval filter bypassed and labels still shown, the
+  model reliably refused to trust the injected memory anyway (real
+  defense-in-depth, but it meant "gate disabled" didn't actually simulate
+  an agent without Palimpsest). See `tests/test_triage_naive_baseline.py`.
 
 ### `api/` — the FastAPI service
 

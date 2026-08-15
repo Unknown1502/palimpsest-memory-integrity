@@ -3,7 +3,10 @@ demo/attack_scenario.py — the exact 4-phase demo. This IS what the video shows
 
     python -m demo.attack_scenario
 
-Requires PALIMPSEST_DSN and valid AWS Bedrock credentials (Titan + Claude).
+Requires PALIMPSEST_DSN and a working chat/adjudicate provider (see
+agent/llm.py — Bedrock by default, or PALIMPSEST_LLM_PROVIDER=anthropic_api
+for a direct console.anthropic.com key) plus AWS credentials for Titan
+embeddings, which stay on Bedrock regardless of that setting.
 
 Note on Phase 2/3B versus the original hand-drafted script: BUILD_PROMPTS.md's
 Prompt 2 requires that an untrusted_ingest source attempting a
@@ -25,7 +28,22 @@ a strictly stronger demo than either original description alone:
     which succeeds, because refusing to WRITE untrusted content isn't
     realistic (anyone can post a ticket comment) — what matters is whether
     it can ever be RETRIEVED to justify a suppress verdict. Phase 3A/3B
-    then toggle exactly this filter, same attack, opposite outcomes.
+    then toggle exactly this — PALIMPSEST_GATE_ENABLED — same attack,
+    opposite outcomes.
+
+Note found by running this against a real, live Claude call for the first
+time (previously blocked by an AWS Bedrock Marketplace billing issue —
+see agent/bedrock_client.py): PALIMPSEST_GATE_ENABLED=false must disable
+BOTH the retrieval-time filter AND whether integrity labels ever reach the
+triage prompt (see agent/triage.py's _ask_claude()), not just the former.
+A live model given the SAME bypassed retrieval but still shown explicit
+"untrusted_ingest" labeling reliably refused to trust the injected memory
+across several injection payloads — real defense-in-depth from the prompt
+itself, but it meant Phase 3A wasn't actually simulating an agent without
+Palimpsest, only one with its retrieval filter off. Tying prompt disclosure
+to the same flag makes Phase 3A a true "no memory-integrity layer at all"
+baseline, and it's what makes this phase now reproducibly SUPPRESS against
+a live model instead of ESCALATE.
 """
 
 from __future__ import annotations
