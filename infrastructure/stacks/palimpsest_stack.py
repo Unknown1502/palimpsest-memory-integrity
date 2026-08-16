@@ -54,10 +54,29 @@ EMBED_MODEL_ID = "amazon.titan-embed-text-v2:0"
 CLAUDE_INFERENCE_PROFILE_ID = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 CLAUDE_MODEL_ID = "anthropic.claude-haiku-4-5-20251001-v1:0"
 
+# The same model on the direct Anthropic API, used when
+# PALIMPSEST_LLM_PROVIDER=anthropic_api. Bare first-party ID -- no
+# "us.anthropic." prefix and no ":0" suffix; that naming is Bedrock-only,
+# and sending it to the direct API is a hard 404.
+ANTHROPIC_API_MODEL_ID = "claude-haiku-4-5"
+
+VALID_LLM_PROVIDERS = ("bedrock", "anthropic_api")
+
 
 class PalimpsestStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
+
+        # Which chat/adjudicate provider the deployed Lambda uses.
+        #   cdk deploy                                  -> bedrock (default)
+        #   cdk deploy -c llm_provider=anthropic_api    -> direct Anthropic API
+        # Validated here rather than at Lambda cold start: a typo should fail
+        # the synth, not produce a deployed function that 500s on first call.
+        llm_provider = self.node.try_get_context("llm_provider") or "bedrock"
+        if llm_provider not in VALID_LLM_PROVIDERS:
+            raise ValueError(
+                f"llm_provider context value {llm_provider!r} is not one of {VALID_LLM_PROVIDERS}"
+            )
 
         # ---------------------------------------------------------------
         # Secret: PALIMPSEST_DSN
@@ -69,6 +88,28 @@ class PalimpsestStack(Stack):
                 "CockroachDB connection string for Palimpsest. Populate the secret VALUE "
                 "manually after `cdk deploy` — see infrastructure/README.md step 2. "
                 "CDK creates the secret container, not its value."
+            ),
+        )
+
+        # ---------------------------------------------------------------
+        # Secret: ANTHROPIC_API_KEY
+        #
+        # Only read when PALIMPSEST_LLM_PROVIDER=anthropic_api (see
+        # agent/llm.py). It exists unconditionally because the Lambda's
+        # env vars are resolved at DEPLOY time via a CloudFormation
+        # dynamic reference -- having the container already present means
+        # switching providers later is a value-set plus redeploy, not a
+        # stack change. Same rule as the DSN secret: CDK creates the
+        # container, never the value.
+        # ---------------------------------------------------------------
+        anthropic_key_secret = secretsmanager.Secret(
+            self,
+            "PalimpsestAnthropicApiKey",
+            description=(
+                "Anthropic API key (console.anthropic.com), used only when "
+                "PALIMPSEST_LLM_PROVIDER=anthropic_api. Populate the secret VALUE manually "
+                "after `cdk deploy` — see infrastructure/README.md. CDK creates the secret "
+                "container, not its value."
             ),
         )
 
@@ -137,7 +178,21 @@ class PalimpsestStack(Stack):
             environment={
                 "PALIMPSEST_DSN": dsn_secret.secret_value.unsafe_unwrap(),
                 "PALIMPSEST_EMBED_MODEL": EMBED_MODEL_ID,
-                "PALIMPSEST_ADJUDICATOR_MODEL": CLAUDE_INFERENCE_PROFILE_ID,
+                # Which provider serves chat()/adjudicate() -- see agent/llm.py.
+                # Set explicitly rather than relying on agent/llm.py's default, so
+                # the deployed Lambda's provider is visible in the template instead
+                # of being implied by code. Override at deploy time with
+                # `cdk deploy -c llm_provider=anthropic_api`.
+                "PALIMPSEST_LLM_PROVIDER": llm_provider,
+                # The adjudicator model ID is provider-specific: a Bedrock
+                # cross-region inference profile ID for provider=bedrock, or a bare
+                # first-party ID (e.g. claude-haiku-4-5) for provider=anthropic_api.
+                # Sending the wrong shape is a hard failure at call time, not a
+                # warning, so it's derived from the provider rather than hardcoded.
+                "PALIMPSEST_ADJUDICATOR_MODEL": (
+                    CLAUDE_INFERENCE_PROFILE_ID if llm_provider == "bedrock" else ANTHROPIC_API_MODEL_ID
+                ),
+                "ANTHROPIC_API_KEY": anthropic_key_secret.secret_value.unsafe_unwrap(),
             },
             log_group=gate_log_group,
         )

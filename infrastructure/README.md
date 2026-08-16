@@ -17,9 +17,9 @@ create the cluster and get its connection string first.
   default retention) for that export — Object Lock can only be turned on
   at bucket creation, which is why it's set in the CDK bucket
   constructor and can't be retrofitted later.
-- A Secrets Manager secret container for `PALIMPSEST_DSN` (CDK creates
-  the secret, not its value — you set that after deploy, see step 2
-  below).
+- Two Secrets Manager secret containers — `PALIMPSEST_DSN` and
+  `PALIMPSEST_ANTHROPIC_API_KEY` (CDK creates the secrets, not their
+  values — you set those after deploy, see step 2 below).
 - IAM scoped to `bedrock:InvokeModel` on the specific Titan/Claude
   model and inference-profile ARNs this project actually calls — never
   `bedrock:*`.
@@ -47,6 +47,26 @@ cdk synth                # sanity check — see it output a template with no err
 cdk deploy                # creates real AWS resources; review the diff it shows first
 ```
 
+### Choosing the chat/adjudicate provider
+
+`PALIMPSEST_LLM_PROVIDER` (see [`../agent/llm.py`](../agent/llm.py))
+decides whether `chat()`/`adjudicate()` go to Bedrock or to the direct
+Anthropic API. It defaults to `bedrock`; override at deploy time:
+
+```bash
+cdk deploy -c llm_provider=anthropic_api
+```
+
+The value is validated at synth time — a typo fails the synth rather than
+producing a deployed Lambda that 500s on its first adjudication. The
+adjudicator model ID is derived from it automatically (a Bedrock
+cross-region inference profile ID vs. a bare first-party ID), because
+sending the wrong shape is a hard failure at call time.
+
+**On this account, deploy with `-c llm_provider=anthropic_api`.** Claude
+on Bedrock is blocked here — see "Why Titan works but Claude doesn't"
+below. Embeddings are unaffected and stay on Bedrock either way.
+
 After deploy, `cdk deploy`'s output includes the `GateHandler` Function
 URL and the `LedgerExportBucket` name — note both.
 
@@ -62,14 +82,61 @@ aws secretsmanager put-secret-value \
   --secret-string "postgresql://<user>:<password>@<host>:26257/<database>?sslmode=verify-full"
 ```
 
+If deploying with `-c llm_provider=anthropic_api`, also set the Anthropic
+API key secret (get a key from console.anthropic.com):
+
+```bash
+aws secretsmanager put-secret-value \
+  --secret-id <PalimpsestAnthropicApiKey-secret-arn-from-deploy-output> \
+  --secret-string "sk-ant-..."
+```
+
 Then update the two Lambdas to pick up the new value (env vars are
 resolved from the secret at **deploy** time via a CloudFormation dynamic
-reference, not fetched fresh per-invocation — so after changing the
+reference, not fetched fresh per-invocation — so after changing a
 secret's value you need to redeploy for the Lambdas to see it):
 
 ```bash
-cdk deploy
+cdk deploy -c llm_provider=anthropic_api
 ```
+
+## Why Titan works but Claude doesn't (on this AWS account)
+
+Bedrock is not uniformly blocked here — this distinction is load-bearing
+and worth stating precisely, because "Bedrock is broken" is wrong:
+
+- **Amazon Titan Text Embeddings V2 — works.** Verified live. Amazon's
+  own models are **not sold through AWS Marketplace** and have no product
+  ID, so they need no Marketplace subscription at all.
+- **Anthropic Claude on Bedrock — blocked.** Third-party models *are*
+  sold through AWS Marketplace, so invoking one auto-initiates a
+  Marketplace subscription. On this account that subscription cannot
+  complete: `AccessDeniedException ... INVALID_PAYMENT_INSTRUMENT`.
+
+Diagnosed down to the exact failing step with the Bedrock model-access
+API (not just the console, which gave no usable error):
+
+```bash
+aws bedrock get-foundation-model-availability \
+  --model-id anthropic.claude-haiku-4-5-20251001-v1:0 --region us-east-1
+# authorizationStatus:      AUTHORIZED   <- IAM is fine
+# entitlementAvailability:  AVAILABLE    <- entitlement is fine
+# regionAvailability:       AVAILABLE    <- region is fine
+# agreementAvailability:    NOT_AVAILABLE  <- the only blocker
+```
+
+`create-foundation-model-agreement` (with an `offerToken` from
+`list-foundation-model-agreement-offers`) does move it
+`NOT_AVAILABLE -> PENDING`, further than the console ever got — but it
+never reaches `AVAILABLE`, and `InvokeModel` still returns
+`INVALID_PAYMENT_INSTRUMENT`. The blocker is AWS Marketplace payment-
+instrument validation at the account level, not IAM, not the region, and
+not the API path used to request access. Nothing in this repo can fix it.
+
+Hence the split: embeddings on Bedrock (real AWS, no Marketplace
+dependency), chat/adjudication on the direct Anthropic API. The AWS
+footprint is still Bedrock + Lambda + S3 Object Lock + Secrets Manager +
+EventBridge + CloudWatch Logs.
 
 ## What this stack does NOT cover, and why (per CONTEXT.md's cut list)
 
