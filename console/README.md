@@ -1,7 +1,7 @@
 # Palimpsest Console
 
 The forensic SOC console — decision timeline, belief store, and rewind.
-Not a chat window (see `CONTEXT.md`'s demo notes): a dark, data-dense
+Not a chat window: a dark, data-dense
 operator UI meant to read clearly on a screen recording.
 
 ## Run locally

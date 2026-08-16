@@ -84,7 +84,7 @@ URL.
 
 ## If Day 3 goes badly
 
-Per `CONTEXT.md`'s own guidance: `demo/attack_scenario.py`'s terminal
+By design, `demo/attack_scenario.py`'s terminal
 output alone, without the console, is still a complete, compelling demo.
 If the console isn't ready or breaks under filming pressure, film the CLI
 output directly — a working CLI demo beats a half-built UI on screen.

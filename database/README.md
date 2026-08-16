@@ -79,7 +79,7 @@ again later (after a schema change) is always safe.
 
 ## 6. Backups (`ccloud` CLI)
 
-Per CONTEXT.md's cut list, backup automation is scripted and documented
+Backup automation is deliberately scripted and documented
 here, not wired into any code path — it doesn't need to run inside the
 demo flow. CockroachDB Cloud clusters take automatic backups, but for an
 explicit, on-demand backup via the `ccloud` CLI (install:

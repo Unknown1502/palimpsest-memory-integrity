@@ -1,5 +1,13 @@
 # Architecture
 
+Rendered diagrams (system flow, integrity lattice, the `admit()`
+transaction, rewind, and the deployed AWS shape) are in the root
+[`README.md`](../README.md#architecture). This file is the prose
+walkthrough: what each component does and why it's shaped that way.
+
+The same structure as a text tree, kept here because it survives
+`grep`, `git diff`, and a terminal with no Mermaid renderer:
+
 ```
 [1] UNTRUSTED CONTENT SOURCES
     ticket comments · tool output · operator statements

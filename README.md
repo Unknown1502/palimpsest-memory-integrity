@@ -37,47 +37,219 @@ Built for the [CockroachDB × AWS Hackathon](https://cockroachdb-ai.devpost.com/
 
 ## Architecture
 
-```
-[1] UNTRUSTED CONTENT SOURCES
-    ticket comments · tool output · operator statements
-        |
-        v
-[2] agent/ingest.py -- capability requested by the CALLER, never by extraction
-        |  Claim + Provenance
-        v
-====================================================================
-[3] memory/gate.py -- MemoryGate
-    THE ONLY WRITE PATH INTO `memories` / `memory_ledger`
-      admit()      lattice check BEFORE any DB connection opens;
-                    contradiction detection + adjudication + ledger
-                    write, one SERIALIZABLE transaction, real 40001 retry
-      retrieve()    filters on capability_ceiling AND integrity_level
-      revoke() / blast_radius() / belief_state_at()  -- rewind primitives
-====================================================================
-        |
-        v
-[4] CockroachDB -- memories (VECTOR INDEX prefixed workspace_id, status),
-    contradictions, approvals, decisions, memory_ledger (hash-chained), rewinds
-        |
-        +--------------------+--------------------+
-        v                    v                    v
-[5] agent/triage.py   [6] api/main.py       [7] memory/ledger_replay.py
-    TriageAgent             FastAPI service       AS OF SYSTEM TIME fallback
-        |                    |
-        v                    v
-[8] agent/llm.py             [9] console/ (Next.js)
-    provider switch:              /timeline /memories /rewind + SQL pane
-    bedrock (default) or
-    anthropic_api -- Titan
-    embeddings always stay
-    on Bedrock either way
+Everything that writes a belief goes through one gate. That's the whole
+security argument — there is exactly one auditable place where beliefs
+enter and change status.
 
-[10] infrastructure/ (AWS CDK) -- GateHandler + LedgerExportHandler Lambdas,
-     S3 with Object Lock, Secrets Manager
+```mermaid
+flowchart TB
+    subgraph SRC["Untrusted content sources"]
+        S1["Ticket comments<br/><i>untrusted_ingest</i>"]
+        S2["Tool output<br/><i>verified_tool</i>"]
+        S3["Operator statements<br/><i>human_confirmed</i>"]
+    end
+
+    ING["<b>agent/ingest.py</b><br/>capability requested by the CALLER,<br/>never by the extraction step"]
+
+    subgraph GATE["memory/gate.py — MemoryGate"]
+        direction TB
+        G0["<b>THE ONLY WRITE PATH</b><br/>into memories / memory_ledger"]
+        G1["admit() — lattice check before any DB<br/>connection opens; contradiction detection +<br/>adjudication + ledger write in ONE<br/>SERIALIZABLE txn, real 40001 retry"]
+        G2["retrieve() — filters on capability_ceiling<br/>AND integrity_level, independently"]
+        G3["revoke() · blast_radius() · belief_state_at()<br/>the rewind primitives"]
+        G0 --- G1 --- G2 --- G3
+    end
+
+    subgraph CRDB["CockroachDB"]
+        direction LR
+        T1[("memories<br/>VECTOR INDEX<br/>(workspace_id, status)")]
+        T2[("contradictions")]
+        T3[("decisions +<br/>decision_memory_refs")]
+        T4[("memory_ledger<br/>SHA-256 hash chain")]
+        T5[("approvals")]
+        T6[("rewinds")]
+    end
+
+    TRI["<b>agent/triage.py</b><br/>TriageAgent — observe/decide/act"]
+    API["<b>api/main.py</b><br/>FastAPI service"]
+    REP["<b>memory/ledger_replay.py</b><br/>fallback when AS OF SYSTEM TIME<br/>is unavailable"]
+    LLM["<b>agent/llm.py</b> — provider switch<br/>Bedrock Titan embeddings always;<br/>chat via Bedrock or Anthropic API"]
+    CON["<b>console/</b> (Next.js)<br/>/timeline · /memories · /rewind"]
+
+    S1 & S2 & S3 --> ING
+    ING -->|"Claim + Provenance"| GATE
+    GATE --> CRDB
+    CRDB --> TRI & API & REP
+    TRI --> LLM
+    API --> CON
+    API -.-> REP
+
+    classDef danger fill:#3b1219,stroke:#b4304a,color:#f5d0d7
+    classDef gate fill:#0e2a33,stroke:#2bb3c9,color:#d6f4fb
+    classDef db fill:#1a1630,stroke:#7b6bd6,color:#e2ddfa
+    class SRC,S1,S2,S3 danger
+    class GATE,G0,G1,G2,G3 gate
+    class CRDB,T1,T2,T3,T4,T5,T6 db
+```
+
+### The integrity lattice
+
+Biba's "no write-up" applied to agent cognition: **a belief's source
+authority caps what kind of decision it may ever influence.** Enforced
+twice — as SQL `CHECK` constraints and again in the retrieval filter.
+
+```mermaid
+flowchart LR
+    subgraph I["Integrity level (of the SOURCE)"]
+        direction TB
+        I4["4 · human_confirmed"]
+        I3["3 · verified_tool"]
+        I2["2 · agent_inferred"]
+        I1["1 · untrusted_ingest"]
+    end
+
+    subgraph C["Capability ceiling (what it may influence)"]
+        direction TB
+        C3["actuating<br/><i>take action</i>"]
+        C2["suppressive<br/><i>silence an alert</i>"]
+        C1["informational<br/><i>context only</i>"]
+    end
+
+    I4 -->|"may assert"| C3
+    I4 --> C2
+    I4 --> C1
+    I3 -->|"may assert"| C2
+    I3 --> C1
+    I2 --> C1
+    I1 -->|"capped at"| C1
+
+    I1 -.->|"BLOCKED<br/>IntegrityViolation<br/>before any DB write"| C2
+
+    classDef hi fill:#0f2e1c,stroke:#3fa46a,color:#d3f5e2
+    classDef lo fill:#3b1219,stroke:#b4304a,color:#f5d0d7
+    classDef cap fill:#12203a,stroke:#4a7fd4,color:#d5e4fb
+    class I4,I3 hi
+    class I2,I1 lo
+    class C3,C2,C1 cap
+```
+
+### One `admit()` — atomic contradiction adjudication
+
+Conflict detection, arbitration, the state change, and the audit-ledger
+append all commit or abort **together**, inside a single
+`SERIALIZABLE` transaction.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Caller as agent/ingest.py
+    participant Lattice as memory/lattice.py
+    participant Gate as MemoryGate.admit()
+    participant DB as CockroachDB
+    participant LLM as adjudicate_fn
+
+    Caller->>Lattice: check_capability_allowed()
+    alt source integrity too low for requested capability
+        Lattice-->>Caller: IntegrityViolation<br/>(zero DB rows written)
+    end
+    Lattice-->>Gate: allowed
+
+    rect rgb(20, 40, 52)
+    note over Gate,DB: ONE SERIALIZABLE transaction (_with_retry wraps 40001)
+    Gate->>DB: BEGIN
+    Gate->>DB: SELECT ... FOR UPDATE<br/>(workspace, subject_key, predicate)
+    alt no incumbent belief
+        Gate->>DB: INSERT new memory
+    else same claim
+        Gate->>DB: bump corroboration counter
+    else contradicting claim
+        alt challenger integrity > incumbent
+            Gate->>DB: incumbent := superseded<br/>challenger := active
+        else challenger integrity < incumbent
+            Gate->>DB: challenger := quarantined<br/>+ row in approvals
+        else equal integrity
+            Gate->>LLM: adjudicate(incumbent, challenger)
+            LLM-->>Gate: winner + rationale
+            Gate->>DB: apply verdict + row in contradictions
+        end
+    end
+    Gate->>DB: INSERT memory_ledger<br/>(prev_hash → entry_hash)
+    Gate->>DB: COMMIT
+    end
+
+    DB-->>Gate: committed
+    Gate-->>Caller: AdmitResult(status, memory_id, contradiction)
+```
+
+### Rewind — blast radius and replay
+
+The point of the whole system: when a poisoned belief is caught, prove
+what the agent believed *at decision time*, find every decision it
+touched, and replay them against corrected memory.
+
+```mermaid
+flowchart TB
+    A["Poisoned belief admitted<br/><i>informational, untrusted_ingest</i>"]
+    B["Agent makes N decisions<br/>citing it as evidence"]
+    C["Attack detected"]
+    D["<b>revoke()</b><br/>status := revoked + ledger entry"]
+    E["<b>blast_radius()</b><br/>every decision that cited this memory_id"]
+    F["<b>belief_state_at(hlc)</b><br/>AS OF SYSTEM TIME reconstruction<br/>proves it WAS trusted then"]
+    G["Replay each decision<br/>against corrected memory state"]
+    H["<b>verdict_flips</b><br/><i>suppress → escalate</i>"]
+
+    A --> B --> C --> D
+    D --> E
+    D --> F
+    E --> G
+    F --> G
+    G --> H
+
+    classDef bad fill:#3b1219,stroke:#b4304a,color:#f5d0d7
+    classDef fix fill:#0f2e1c,stroke:#3fa46a,color:#d3f5e2
+    classDef win fill:#33280c,stroke:#c9a227,color:#f8ecc2
+    class A,B,C bad
+    class D,E,F,G fix
+    class H win
+```
+
+### Deployed shape (AWS)
+
+```mermaid
+flowchart LR
+    U["Browser / curl"]
+    subgraph AWS["AWS"]
+        FU["Function URL"]
+        L1["<b>GateHandler</b> Lambda<br/>api/main.py via Mangum"]
+        L2["<b>LedgerExportHandler</b> Lambda"]
+        EB["EventBridge<br/>every 5 min"]
+        S3[("S3 bucket<br/><b>Object Lock</b> governance")]
+        SM["Secrets Manager<br/>DSN · Anthropic key"]
+        BR["Bedrock<br/>Titan Text Embeddings V2"]
+        CW["CloudWatch Logs<br/>7-day retention"]
+    end
+    CRDB[("CockroachDB Cloud")]
+    ANT["Anthropic API<br/>(chat / adjudicate)"]
+
+    U --> FU --> L1
+    L1 --> CRDB
+    L1 --> BR
+    L1 --> ANT
+    EB --> L2 --> CRDB
+    L2 --> S3
+    SM -.->|"resolved at deploy time"| L1
+    SM -.-> L2
+    L1 & L2 --> CW
+
+    classDef aws fill:#2a1e08,stroke:#e08b1a,color:#fbe6c4
+    classDef ext fill:#1a1630,stroke:#7b6bd6,color:#e2ddfa
+    class FU,L1,L2,EB,S3,SM,BR,CW aws
+    class CRDB,ANT ext
 ```
 
 Full prose version, component by component: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 Formal threat model: [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
+Setup from scratch: [`docs/SETUP.md`](docs/SETUP.md).
 
 ## Which CockroachDB tools, and how
 
@@ -143,22 +315,47 @@ live-read sibling), and `belief_state_at()` needing a dedicated
   a CloudFormation dynamic reference, never a plaintext CDK value.
 
 Full stack details and what's deliberately *not* deployed (Step
-Functions, API Gateway, multi-region — see the cut list in
-[`CONTEXT.md`](CONTEXT.md)): [`infrastructure/README.md`](infrastructure/README.md).
+Functions, API Gateway, multi-region):
+[`infrastructure/README.md`](infrastructure/README.md).
 
 ## Setup
 
-1. [`database/README.md`](database/README.md) — create a CockroachDB
-   cluster (Cloud or local via Docker), enable vector indexes, apply the
-   schema.
-2. `pip install -r requirements.txt`, then `python -m agent.bedrock_client`
-   to confirm Bedrock connectivity.
-3. `uvicorn api.main:app --reload` for the API.
-4. `cd console && npm install && npm run dev` for the console.
-5. [`infrastructure/README.md`](infrastructure/README.md) if you want the
-   AWS-deployed version (`cdk synth` / `cdk deploy`).
-6. `python -m demo.seed` then `python -m demo.attack_scenario` for the
-   full 4-phase demo — see [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md).
+**Full step-by-step guide, including every prerequisite, exact verified
+tool versions, and a troubleshooting table:
+[`docs/SETUP.md`](docs/SETUP.md).**
+
+The short version, once prerequisites (Python 3.11+, Node 20+, Docker,
+AWS CLI v2) are in place:
+
+```bash
+python -m venv .venv && source .venv/Scripts/activate   # or .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env                                    # then fill it in
+
+# CockroachDB — local single-node (Cloud: see database/README.md)
+docker run -d --name palimpsest-crdb -p 26257:26257 -p 8080:8080 \
+  cockroachdb/cockroach:latest-v25.2 start-single-node --insecure
+docker exec palimpsest-crdb ./cockroach sql --insecure \
+  -e "CREATE DATABASE IF NOT EXISTS palimpsest; SET CLUSTER SETTING feature.vector_index.enabled = true;"
+
+python database/migrate.py          # apply schema
+python -m agent.bedrock_client      # confirm Titan embeddings work
+pytest -q                           # 19 tests, real DB, zero mocks
+
+python -m demo.seed                 # prints a workspace_id
+python -m demo.attack_scenario      # the 4-phase demo
+```
+
+Then, in two terminals:
+
+```bash
+uvicorn api.main:app --reload --port 8000     # API
+cd console && npm install && npm run dev      # console → localhost:3000
+```
+
+Paste the `workspace_id` from `demo.seed` into the field in the console's
+top-right corner. For the AWS-deployed version, see
+[`infrastructure/README.md`](infrastructure/README.md).
 
 ## Proof, not just claims
 
@@ -209,8 +406,7 @@ deterministic tie-break — is under [`tests/`](tests/).
 
 ## Roadmap
 
-Per [`CONTEXT.md`](CONTEXT.md)'s cut list — deliberately deferred past
-this submission, not forgotten:
+Deliberately deferred past this submission, not forgotten:
 
 1. **Multi-region** (`REGIONAL BY ROW`) — `crdb_region` can participate as
    a vector index prefix column, giving per-region data locality and

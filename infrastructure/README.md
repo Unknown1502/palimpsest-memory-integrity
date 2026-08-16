@@ -1,6 +1,7 @@
 # Infrastructure (AWS CDK)
 
-This stack is genuinely minimal on purpose — see CONTEXT.md's cut list.
+This stack is genuinely minimal on purpose — see the Roadmap in the root
+README for what was deliberately deferred.
 **It does not provision CockroachDB.** CockroachDB Cloud is managed
 separately; see [`../database/README.md`](../database/README.md) to
 create the cluster and get its connection string first.
@@ -138,7 +139,7 @@ dependency), chat/adjudication on the direct Anthropic API. The AWS
 footprint is still Bedrock + Lambda + S3 Object Lock + Secrets Manager +
 EventBridge + CloudWatch Logs.
 
-## What this stack does NOT cover, and why (per CONTEXT.md's cut list)
+## What this stack does NOT cover, and why (deliberately deferred)
 
 - **Step Functions orchestration for rewind** — not included. `POST
   /rewind/apply` calls the replay logic directly and synchronously from
@@ -151,7 +152,7 @@ EventBridge + CloudWatch Logs.
   level; `GateHandler` is a synchronous request/response Lambda.
 - **Multi-region** — this stack deploys to a single AWS region (whatever
   your CDK environment / `AWS_REGION` resolves to). `REGIONAL BY ROW` on
-  the CockroachDB side is documented as roadmap-only in CONTEXT.md, and
+  the CockroachDB side is documented as roadmap-only in the root README, and
   nothing here assumes multi-region.
 - **KMS-signed ledger entries** — the ledger's SHA-256 hash chain
   (verified via `GET /ledger/verify`) is the tamper-evidence mechanism;
