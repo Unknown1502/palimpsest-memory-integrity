@@ -138,6 +138,27 @@ secret's value you need to redeploy for the Lambdas to see it):
 cdk deploy -c llm_provider=anthropic_api
 ```
 
+## CORS is owned by the app, not the Function URL
+
+`add_function_url()` is deliberately called **without** `cors=`. FastAPI
+already installs `CORSMiddleware` (`api/main.py`); configuring CORS at the
+Function URL as well makes both layers emit
+`Access-Control-Allow-Origin`, and a response carrying that header twice
+is rejected by browsers per the CORS spec. `curl` doesn't care, so this
+passes manual testing and only shows up as an opaque network failure in
+the console.
+
+> **CloudFormation does not remove a Function URL's CORS block when you
+> delete `cors=` from the CDK code.** The property simply stops being
+> managed, and the previously-configured value stays live — a deploy
+> reports `UPDATE_COMPLETE` while the duplicate header persists. Clear it
+> once, directly:
+> ```bash
+> aws lambda update-function-url-config \
+>   --function-name <GateHandler-function-name> --cors '{}'
+> ```
+> A stack deployed fresh from this code never sets it in the first place.
+
 ## Why Titan works but Claude doesn't (on this AWS account)
 
 Bedrock is not uniformly blocked here — this distinction is load-bearing
