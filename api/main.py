@@ -16,8 +16,9 @@ import re
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
+from api import landing
 from api.routes import approvals, decisions, ledger, memories, rewind
 
 logger = logging.getLogger("palimpsest.api")
@@ -155,6 +156,17 @@ app.include_router(rewind.router)
 app.include_router(ledger.router)
 
 
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+def index() -> HTMLResponse:
+    """
+    Human-facing index for the deployed Function URL, which doubles as this
+    project's public demo link. Without it, `/` is FastAPI's bare
+    `{"detail":"Not Found"}` -- correct, but indistinguishable from a broken
+    deployment to anyone who clicks the URL before reading the docs.
+    """
+    return HTMLResponse(landing.render(dsn=os.environ.get("PALIMPSEST_DSN", ""), readonly=READONLY))
+
+
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok"}
+    return {"status": "ok", "readonly": READONLY}
