@@ -336,7 +336,8 @@ pick up the values (env vars resolve at deploy time, not per-invocation).
 |---|---|---|
 | `ModuleNotFoundError: psycopg` | installed into system Python | activate the venv, or call `./.venv/Scripts/python.exe` |
 | `KeyError: 'PALIMPSEST_DSN'` after `source .env` | unquoted `&` in the DSN | quote the whole value |
-| `root certificate file ... does not exist` | libpq CA path unset | see the `root.crt` gotcha in [§3](#full-path-cockroachdb-cloud) |
+| `root certificate file ... does not exist` (local) | libpq CA path unset | see the `root.crt` gotcha in [§3](#full-path-cockroachdb-cloud) |
+| `root certificate file "/home/sbx_userNNNN/.postgresql/root.crt" does not exist` (deployed Lambda) | Lambda runtime has no CA file, and the DSN uses `sslmode=verify-full` | set `PGSSLROOTCERT=system` on the function (the CDK stack does this); `/health` keeps returning 200 while every DB route 500s, which makes this look like a DB outage rather than a TLS config problem |
 | `SSL error: certificate verify failed` | wrong/stale CA cert | re-download `root.crt` for *your* cluster ID |
 | `FeatureNotSupported: vector indexes are not enabled` | cluster setting off | `SET CLUSTER SETTING feature.vector_index.enabled = true;` then re-run migrate |
 | `AS OF SYSTEM TIME` errors on rewind | GC TTL too short, or tier restricts `CONFIGURE ZONE` | raise `gc.ttlseconds`, or rely on the ledger-replay fallback |
@@ -345,5 +346,6 @@ pick up the values (env vars resolve at deploy time, not per-invocation).
 | `ValidationException` on a Claude Bedrock call | bare model ID instead of inference profile | use the `us.`-prefixed profile ID |
 | Console shows "No workspace selected" | no `workspace_id` entered | paste one into the top-right field |
 | Console loads but no data | API not reachable at its base URL | set `NEXT_PUBLIC_API_BASE_URL` |
+| Console fails against the *deployed* URL while `curl` works | duplicate `Access-Control-Allow-Origin` — CORS configured on both the Lambda Function URL and FastAPI's `CORSMiddleware`; browsers reject two headers, `curl` doesn't care | configure CORS in exactly one layer (this repo keeps it in the app) |
 | `The token '&&' is not a valid statement separator` | PowerShell 5.1 | run the commands on separate lines; `&&` is bash-only |
 | CDK `Another CLI is currently synthing to cdk.out` | concurrent synth | wait for it, or pass `--output` a different dir |

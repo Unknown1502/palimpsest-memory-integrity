@@ -62,6 +62,29 @@ ANTHROPIC_API_MODEL_ID = "claude-haiku-4-5"
 
 VALID_LLM_PROVIDERS = ("bedrock", "anthropic_api")
 
+# A CockroachDB Cloud DSN uses sslmode=verify-full, which makes libpq verify
+# the server certificate against a CA file. The Lambda runtime has no
+# ~/.postgresql/root.crt, so without this every DB call fails with
+# `root certificate file "/home/sbx_userNNNN/.postgresql/root.crt" does not
+# exist` -- confirmed live against the deployed Function URL, where /health
+# (no DB) returned 200 while every data route returned 500.
+#
+# `PGSSLROOTCERT=system` (use the OS trust store) was tried first and is NOT
+# sufficient here: the error only changed from "root certificate file does not
+# exist" to "SSL error: certificate verify failed". CockroachDB Cloud's bundle
+# is two Let's Encrypt roots -- ISRG Root X1 and X2 -- and the Lambda base
+# image's trust store doesn't carry both, so verification still fails.
+#
+# So the CA bundle is shipped inside the deployment package instead and
+# referenced by absolute path. Committing it is fine: these are public root
+# certificates, present in every browser, not a credential.
+#
+# Set as PGSSLROOTCERT (a libpq environment variable) rather than appended to
+# the DSN, so the Secrets Manager value stays purely a credential and both
+# Lambdas pick this up without the secret having to know about TLS plumbing.
+CA_CERT_FILENAME = "cockroachdb-cloud-ca.crt"
+PGSSLROOTCERT = f"/var/task/{CA_CERT_FILENAME}"  # /var/task is the Lambda package root
+
 
 def _ctx_bool(value, *, default: bool) -> bool:
     """
@@ -205,6 +228,8 @@ class PalimpsestStack(Stack):
                                 "pip install --no-cache-dir -r requirements.txt --target /asset-output",
                                 "cp -r memory agent api /asset-output/",
                                 "cp infrastructure/lambda/gate_handler/handler.py /asset-output/handler.py",
+                                # CA bundle for sslmode=verify-full -- see PGSSLROOTCERT above.
+                                f"cp infrastructure/{CA_CERT_FILENAME} /asset-output/{CA_CERT_FILENAME}",
                             ]
                         ),
                     ],
@@ -235,6 +260,7 @@ class PalimpsestStack(Stack):
                 # no auth layer of its own, so the public deployment disables
                 # the routes that destroy belief state or spend real LLM credit.
                 "PALIMPSEST_READONLY": "true" if readonly else "false",
+                "PGSSLROOTCERT": PGSSLROOTCERT,
             },
             log_group=gate_log_group,
         )
@@ -244,14 +270,18 @@ class PalimpsestStack(Stack):
         # unauthenticated visitor gets 403. `-c public_url=true` opens it for a
         # publicly-clickable demo link -- which is only safe together with
         # readonly (enforced below), because nothing else authenticates this API.
+        #
+        # Deliberately NO `cors=` here. The FastAPI app already installs its own
+        # CORSMiddleware (api/main.py), and configuring CORS at the Function URL
+        # too makes BOTH layers emit Access-Control-Allow-Origin -- the response
+        # then carries the header twice, which browsers reject outright per the
+        # CORS spec, surfacing in the console as an opaque network failure.
+        # Caught by curling the deployed URL with an Origin header and seeing two
+        # `access-control-allow-origin` lines come back. One layer owns CORS, and
+        # it's the app, so the same behavior holds locally and deployed.
         gate_url = gate_handler.add_function_url(
             auth_type=(
                 _lambda.FunctionUrlAuthType.NONE if public_url else _lambda.FunctionUrlAuthType.AWS_IAM
-            ),
-            cors=_lambda.FunctionUrlCorsOptions(
-                allowed_origins=["*"],
-                allowed_methods=[_lambda.HttpMethod.ALL],
-                allowed_headers=["*"],
             ),
         )
 
@@ -271,15 +301,23 @@ class PalimpsestStack(Stack):
             runtime=_lambda.Runtime.PYTHON_3_12,
             architecture=_lambda.Architecture.X86_64,
             handler="handler.handler",
+            # Asset root is REPO_ROOT, not the ledger_export/ subdirectory,
+            # purely so the bundling step can also reach the CA bundle at
+            # infrastructure/. Only the two files below end up in the package.
             code=_lambda.Code.from_asset(
-                str(REPO_ROOT / "infrastructure" / "lambda" / "ledger_export"),
+                str(REPO_ROOT),
                 bundling=BundlingOptions(
                     image=_lambda.Runtime.PYTHON_3_12.bundling_image,
                     command=[
                         "bash",
                         "-c",
-                        "pip install --no-cache-dir 'psycopg[binary]>=3.1,<4' --target /asset-output "
-                        "&& cp handler.py /asset-output/handler.py",
+                        " && ".join(
+                            [
+                                "pip install --no-cache-dir 'psycopg[binary]>=3.1,<4' --target /asset-output",
+                                "cp infrastructure/lambda/ledger_export/handler.py /asset-output/handler.py",
+                                f"cp infrastructure/{CA_CERT_FILENAME} /asset-output/{CA_CERT_FILENAME}",
+                            ]
+                        ),
                     ],
                 ),
             ),
@@ -288,6 +326,9 @@ class PalimpsestStack(Stack):
             environment={
                 "PALIMPSEST_DSN": dsn_secret.secret_value.unsafe_unwrap(),
                 "PALIMPSEST_LEDGER_BUCKET": ledger_bucket.bucket_name,
+                # Same CA-verification reason as GateHandler above -- this
+                # Lambda connects to the same cluster with the same DSN.
+                "PGSSLROOTCERT": PGSSLROOTCERT,
             },
             log_group=export_log_group,
         )
