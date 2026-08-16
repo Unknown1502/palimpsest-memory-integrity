@@ -10,9 +10,12 @@ real and runs against this repo as built — nothing here is aspirational.
 export PALIMPSEST_DSN="postgresql://...@...:26257/palimpsest?sslmode=verify-full"
 python database/migrate.py
 
-# 2. AWS credentials + Bedrock model access confirmed
+# 2. Embeddings (always Bedrock/Titan) + your chat provider
 export AWS_REGION=us-east-1
-python -m agent.bedrock_client   # smoke test — must print "Bedrock smoke test PASSED."
+
+#    Run the smoke test that matches PALIMPSEST_LLM_PROVIDER (see agent/llm.py):
+python -m agent.bedrock_client      # provider=bedrock      -> "Bedrock smoke test PASSED."
+python -m agent.anthropic_client    # provider=anthropic_api -> "Anthropic direct-API smoke test PASSED."
 
 # 3. API running
 uvicorn api.main:app --reload &
@@ -20,9 +23,23 @@ uvicorn api.main:app --reload &
 # 4. Console running
 cd console && npm run dev &
 
-# 5. Fresh demo state
+# 5. Fresh demo state — prints the workspace_id to paste into the console
 bash demo/reset.sh
 ```
+
+> **Run the smoke test for the provider you're actually filming with.**
+> `python -m agent.bedrock_client` exercises Titan embeddings *and* a
+> Claude-on-Bedrock call, so on an account where Bedrock's Marketplace
+> subscription is blocked it fails at the Claude step even though
+> embeddings are fine — a confusing thing to hit ten minutes before
+> recording. With `PALIMPSEST_LLM_PROVIDER=anthropic_api`, run
+> `python -m agent.anthropic_client` instead; embeddings are still
+> verified by the demo itself on its first `admit()`.
+
+> **Paste the `workspace_id` from step 5 into the console's top-right
+> field** before filming any console shot. Without it every view shows
+> "No workspace selected" — the expected empty state, but not what you
+> want on camera.
 
 Keep a second terminal open on `python -m demo.attack_scenario` — that
 single command produces the entire narrative below, in order, with clear
