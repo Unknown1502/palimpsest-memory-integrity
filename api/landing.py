@@ -29,7 +29,7 @@ logger = logging.getLogger("palimpsest.api")
 REPO_URL = "https://github.com/Unknown1502/palimpsest-memory-integrity"
 
 
-def _pick_demo_workspace(dsn: str) -> tuple[str | None, dict]:
+def pick_demo_workspace(dsn: str) -> tuple[str | None, dict]:
     """
     Newest workspace that actually has decisions -- an empty workspace makes
     every link on the page look broken even though the API is fine.
@@ -88,7 +88,7 @@ border-top:1px solid var(--line);padding-top:16px}
 
 
 def render(dsn: str, readonly: bool) -> str:
-    workspace_id, counts = _pick_demo_workspace(dsn)
+    workspace_id, counts = pick_demo_workspace(dsn)
 
     if workspace_id:
         ws = html.escape(workspace_id)

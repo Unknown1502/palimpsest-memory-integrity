@@ -214,3 +214,20 @@ export const api = {
   verifyLedger: (workspaceId: string) =>
     request<LedgerVerifyResult>(`/workspaces/${workspaceId}/ledger/verify`),
 };
+
+/**
+ * Which workspace to show when the visitor hasn't picked one. Used by
+ * workspace-context so the deployed demo renders real data on first paint
+ * instead of an empty state telling the visitor to run a seed script.
+ * Returns "" rather than throwing when nothing is seeded or the API is
+ * unreachable — the views already render their own empty state, and a
+ * rejected promise here would surface as an unhandled rejection.
+ */
+export async function fetchDemoWorkspace(): Promise<string> {
+  try {
+    const res = await request<{ workspace_id: string | null }>("/demo-workspace");
+    return res.workspace_id ?? "";
+  } catch {
+    return "";
+  }
+}

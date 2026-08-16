@@ -13,10 +13,11 @@ from __future__ import annotations
 import logging
 import os
 import re
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from api import landing
 from api.routes import approvals, decisions, ledger, memories, rewind
@@ -156,17 +157,132 @@ app.include_router(rewind.router)
 app.include_router(ledger.router)
 
 
-@app.get("/", response_class=HTMLResponse, include_in_schema=False)
-def index() -> HTMLResponse:
-    """
-    Human-facing index for the deployed Function URL, which doubles as this
-    project's public demo link. Without it, `/` is FastAPI's bare
-    `{"detail":"Not Found"}` -- correct, but indistinguishable from a broken
-    deployment to anyone who clicks the URL before reading the docs.
-    """
-    return HTMLResponse(landing.render(dsn=os.environ.get("PALIMPSEST_DSN", ""), readonly=READONLY))
-
-
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "readonly": READONLY}
+
+
+@app.get("/demo-workspace", include_in_schema=False)
+def demo_workspace() -> dict:
+    """
+    The workspace the console should show when the visitor hasn't chosen one.
+
+    Without this, a first-time visitor lands on an empty console reading
+    "No workspace selected. Run python -m demo.seed and paste the printed
+    workspace_id" -- instructions that are correct for a developer running
+    locally and useless to someone who just opened the public demo link.
+    Returning the most interesting seeded workspace lets the console show
+    real data on first paint with nothing to paste.
+
+    Picks by decision count, not recency: the newest workspace is often a
+    bare seed with one memory and no decisions, which looks broken.
+    """
+    workspace_id, counts = landing.pick_demo_workspace(os.environ.get("PALIMPSEST_DSN", ""))
+    return {"workspace_id": workspace_id, **counts}
+
+
+# ---------------------------------------------------------------------------
+# The console (Next.js static export), served from this same app, so the
+# deployed demo is ONE origin: the UI and the API it calls. That also means
+# the console's fetches are same-origin and CORS never applies to them.
+#
+# Registered LAST so every API route above matches first; only unmatched
+# paths fall through to the static resolver. Absent (an API-only run, or
+# before `npm run build`), "/" degrades to the API landing page rather than
+# failing at startup.
+#
+# Deliberately NOT StaticFiles(html=True) mounted at "/". That redirects a
+# directory request to the trailing-slash form, and behind Mangum the path
+# StaticFiles sees doesn't match what the client sent, so it emits a
+# redirect to the URL already requested -- /timeline/ -> /timeline/, an
+# infinite loop. It only reproduces on Lambda: plain uvicorn serves the same
+# routes 200/text/html, so this has to be checked against the deployed URL,
+# not just locally. Resolving paths to files explicitly here avoids the
+# redirect machinery altogether: every response is a file or a 404.
+# ---------------------------------------------------------------------------
+_CONSOLE_DIR = Path(__file__).resolve().parent.parent / "console" / "out"
+
+_MEDIA_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".webp": "image/webp",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+    ".txt": "text/plain; charset=utf-8",
+    ".map": "application/json",
+}
+
+
+def _resolve_console_file(url_path: str) -> Path | None:
+    """
+    Map a URL path to a file in the static export, or None.
+
+    Tries, in order: the literal file, `<path>/index.html` (how Next.js
+    emits routes under trailingSlash), and `<path>.html`.
+
+    The candidate is resolved and re-checked against the export directory
+    before returning, so `..` segments or an absolute path can't escape it
+    into the rest of the Lambda package.
+    """
+    relative = url_path.strip("/")
+    base = _CONSOLE_DIR.resolve()
+    candidates = (
+        (base / relative) if relative else (base / "index.html"),
+        (base / relative / "index.html") if relative else None,
+        (base / f"{relative}.html") if relative else None,
+    )
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if not resolved.is_file():
+            continue
+        if not resolved.is_relative_to(base):  # path-traversal guard
+            logger.warning("console path escaped the export directory: %s", url_path)
+            continue
+        return resolved
+    return None
+
+
+if _CONSOLE_DIR.is_dir():
+    logger.info("serving console static export from %s", _CONSOLE_DIR)
+
+    # Immutable, content-hashed assets get a long max-age; HTML must not be
+    # cached, or a redeploy leaves visitors on a stale page referencing
+    # chunk files that no longer exist.
+    @app.get("/{console_path:path}", include_in_schema=False)
+    def console(console_path: str) -> FileResponse:
+        target = _resolve_console_file(console_path)
+        if target is None:
+            not_found = _resolve_console_file("404")
+            if not_found is None:
+                raise HTTPException(status_code=404, detail="Not Found")
+            return FileResponse(not_found, status_code=404, media_type="text/html; charset=utf-8")
+        media_type = _MEDIA_TYPES.get(target.suffix.lower(), "application/octet-stream")
+        immutable = console_path.startswith("_next/static/")
+        return FileResponse(
+            target,
+            media_type=media_type,
+            headers={
+                "Cache-Control": (
+                    "public, max-age=31536000, immutable" if immutable else "no-cache"
+                )
+            },
+        )
+
+else:
+    logger.info("no console build at %s -- serving the API landing page at /", _CONSOLE_DIR)
+
+    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+    def index() -> HTMLResponse:
+        return HTMLResponse(landing.render(dsn=os.environ.get("PALIMPSEST_DSN", ""), readonly=READONLY))

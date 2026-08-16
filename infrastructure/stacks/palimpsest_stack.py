@@ -230,6 +230,13 @@ class PalimpsestStack(Stack):
                                 "cp infrastructure/lambda/gate_handler/handler.py /asset-output/handler.py",
                                 # CA bundle for sslmode=verify-full -- see PGSSLROOTCERT above.
                                 f"cp infrastructure/{CA_CERT_FILENAME} /asset-output/{CA_CERT_FILENAME}",
+                                # The console's static export, so this one Lambda serves
+                                # both the API and the UI from a single origin. api/main.py
+                                # looks for it at <package root>/console/out and falls back
+                                # to the API landing page when it's absent, so a deploy
+                                # without a prior `npm run build` degrades rather than breaks.
+                                "mkdir -p /asset-output/console",
+                                "cp -r console/out /asset-output/console/out || echo 'no console build -- serving API landing page instead'",
                             ]
                         ),
                     ],
