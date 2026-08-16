@@ -68,6 +68,43 @@ sending the wrong shape is a hard failure at call time.
 on Bedrock is blocked here — see "Why Titan works but Claude doesn't"
 below. Embeddings are unaffected and stay on Bedrock either way.
 
+### Public demo URL, and why it's read-only
+
+The Function URL defaults to `AWS_IAM` auth: every request must be
+SigV4-signed, so an unauthenticated visitor gets a 403. That's the right
+default, but it makes the URL useless as a *clickable* demo link.
+
+```bash
+cdk deploy -c llm_provider=anthropic_api -c public_url=true -c readonly=true
+```
+
+`public_url=true` sets the Function URL's auth type to `NONE`.
+`readonly=true` sets `PALIMPSEST_READONLY` on the Lambda, which activates
+`api/main.py`'s `ReadOnlyMiddleware`.
+
+**These two flags are interlocked: `public_url=true` without
+`readonly=true` fails the synth.** This API has no authentication layer
+of its own, so a public URL with writes enabled would let anyone who
+finds it revoke beliefs (destroying state) or drive `/rewind/apply` in a
+loop (real, metered LLM spend). Making that combination impossible to
+deploy by accident is worth more than the flexibility of allowing it.
+
+What read-only blocks — chosen by what a call **costs or destroys**, not
+by HTTP verb:
+
+| Route | Public demo | Why |
+|---|---|---|
+| all `GET` routes | ✅ allowed | reads only |
+| `POST /rewind` | ✅ allowed | computes the belief diff + blast-radius *preview*; no LLM calls, no belief-state change |
+| `POST /memories/{id}/revoke` | ❌ 403 | destroys belief state |
+| `POST /rewind/{id}/apply` | ❌ 403 | replays decisions → real LLM spend |
+| `POST /approvals/{id}/resolve` | ❌ 403 | mutates the approval queue |
+
+The rewind *preview* is deliberately left enabled — it's the whole visual
+argument of the project (then-vs-now belief diff, blast radius), and it
+costs nothing. The 403 response carries CORS headers, so the console
+renders a readable message rather than an opaque network error.
+
 After deploy, `cdk deploy`'s output includes the `GateHandler` Function
 URL and the `LedgerExportBucket` name — note both.
 

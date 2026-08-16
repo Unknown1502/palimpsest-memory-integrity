@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from aws_cdk import BundlingOptions, Duration, RemovalPolicy, Stack
+from aws_cdk import BundlingOptions, CfnOutput, Duration, RemovalPolicy, Stack
 from aws_cdk import aws_events as events
 from aws_cdk import aws_events_targets as targets
 from aws_cdk import aws_iam as iam
@@ -63,6 +63,25 @@ ANTHROPIC_API_MODEL_ID = "claude-haiku-4-5"
 VALID_LLM_PROVIDERS = ("bedrock", "anthropic_api")
 
 
+def _ctx_bool(value, *, default: bool) -> bool:
+    """
+    CDK `-c key=value` context always arrives as a STRING, so a plain
+    truthiness check would make `-c readonly=false` evaluate to True --
+    exactly backwards, and silently. Parse explicitly and reject anything
+    ambiguous rather than guessing.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in ("true", "1", "yes"):
+        return True
+    if normalized in ("false", "0", "no"):
+        return False
+    raise ValueError(f"expected a boolean-ish context value, got {value!r}")
+
+
 class PalimpsestStack(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -76,6 +95,24 @@ class PalimpsestStack(Stack):
         if llm_provider not in VALID_LLM_PROVIDERS:
             raise ValueError(
                 f"llm_provider context value {llm_provider!r} is not one of {VALID_LLM_PROVIDERS}"
+            )
+
+        # `-c public_url=true`  -> Function URL auth NONE (publicly clickable)
+        # `-c readonly=true`    -> api/main.py blocks destructive/metered routes
+        public_url = _ctx_bool(self.node.try_get_context("public_url"), default=False)
+        readonly = _ctx_bool(self.node.try_get_context("readonly"), default=False)
+
+        # Safety interlock. A publicly-reachable Function URL in front of an API
+        # with no authentication of its own means anyone who finds the URL can
+        # revoke beliefs and drive real, metered LLM calls. Making that
+        # combination impossible to deploy by accident is worth more than the
+        # flexibility of allowing it -- fail the synth, not production.
+        if public_url and not readonly:
+            raise ValueError(
+                "Refusing to synth: public_url=true without readonly=true would expose an "
+                "unauthenticated API that can destroy belief state and spend real LLM credit. "
+                "Deploy with `-c public_url=true -c readonly=true`, or keep the default "
+                "AWS_IAM-authenticated URL."
             )
 
         # ---------------------------------------------------------------
@@ -193,12 +230,30 @@ class PalimpsestStack(Stack):
                     CLAUDE_INFERENCE_PROFILE_ID if llm_provider == "bedrock" else ANTHROPIC_API_MODEL_ID
                 ),
                 "ANTHROPIC_API_KEY": anthropic_key_secret.secret_value.unsafe_unwrap(),
+                # See api/main.py's ReadOnlyMiddleware. The Function URL below
+                # has no authentication when public_url=true, and this API has
+                # no auth layer of its own, so the public deployment disables
+                # the routes that destroy belief state or spend real LLM credit.
+                "PALIMPSEST_READONLY": "true" if readonly else "false",
             },
             log_group=gate_log_group,
         )
         gate_handler.add_to_role_policy(bedrock_policy)
 
-        gate_url = gate_handler.add_function_url(auth_type=_lambda.FunctionUrlAuthType.AWS_IAM)
+        # AWS_IAM by default: every request must be SigV4-signed, so an
+        # unauthenticated visitor gets 403. `-c public_url=true` opens it for a
+        # publicly-clickable demo link -- which is only safe together with
+        # readonly (enforced below), because nothing else authenticates this API.
+        gate_url = gate_handler.add_function_url(
+            auth_type=(
+                _lambda.FunctionUrlAuthType.NONE if public_url else _lambda.FunctionUrlAuthType.AWS_IAM
+            ),
+            cors=_lambda.FunctionUrlCorsOptions(
+                allowed_origins=["*"],
+                allowed_methods=[_lambda.HttpMethod.ALL],
+                allowed_headers=["*"],
+            ),
+        )
 
         # ---------------------------------------------------------------
         # LedgerExportHandler: on a 5-minute EventBridge schedule
@@ -248,3 +303,42 @@ class PalimpsestStack(Stack):
         self.gate_function_url = gate_url.url
         self.ledger_bucket_name = ledger_bucket.bucket_name
         self.dsn_secret_arn = dsn_secret.secret_arn
+
+        # ---------------------------------------------------------------
+        # Stack outputs
+        #
+        # These are what `cdk deploy --outputs-file` writes and what the
+        # console needs (NEXT_PUBLIC_API_BASE_URL). Without explicit
+        # CfnOutputs the outputs file is just `{}` -- the Python attributes
+        # above are only visible inside the CDK app, never in CloudFormation.
+        # ---------------------------------------------------------------
+        CfnOutput(self, "GateFunctionUrl", value=gate_url.url, description="GateHandler HTTP endpoint")
+        CfnOutput(
+            self,
+            "GateFunctionUrlAuth",
+            value="NONE (public)" if public_url else "AWS_IAM (SigV4 required)",
+            description="Auth mode on the Function URL",
+        )
+        CfnOutput(
+            self,
+            "ApiWriteMode",
+            value="READ-ONLY (destructive + metered routes blocked)" if readonly else "READ-WRITE",
+            description="Whether api/main.py's ReadOnlyMiddleware is active",
+        )
+        CfnOutput(self, "LlmProvider", value=llm_provider, description="Backs chat()/adjudicate()")
+        # NB: not "LedgerExportBucket" -- CfnOutput IDs share the construct-ID
+        # namespace with every other construct in the stack, and the S3 bucket
+        # already owns that name.
+        CfnOutput(
+            self,
+            "LedgerExportBucketName",
+            value=ledger_bucket.bucket_name,
+            description="Object Lock ledger export target",
+        )
+        CfnOutput(self, "DsnSecretArn", value=dsn_secret.secret_arn, description="Set this secret's VALUE after deploy")
+        CfnOutput(
+            self,
+            "AnthropicApiKeySecretArn",
+            value=anthropic_key_secret.secret_arn,
+            description="Set this secret's VALUE after deploy (only used when llm_provider=anthropic_api)",
+        )

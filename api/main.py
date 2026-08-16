@@ -11,6 +11,8 @@ Ledger" panel reads from.
 from __future__ import annotations
 
 import logging
+import os
+import re
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,6 +23,20 @@ from api.routes import approvals, decisions, ledger, memories, rewind
 logger = logging.getLogger("palimpsest.api")
 
 app = FastAPI(title="Palimpsest API", version="0.1.0")
+
+READONLY = os.environ.get("PALIMPSEST_READONLY", "false").strip().lower() in ("1", "true", "yes")
+
+# Routes blocked when PALIMPSEST_READONLY=true. Chosen by what a call
+# actually COSTS or DESTROYS, not by HTTP verb -- POST /rewind is
+# deliberately still allowed because it only computes a preview
+# (belief diff + blast radius) and writes one inert row: no LLM calls, no
+# state change to any belief. That preview is the whole visual argument of
+# the project, so a read-only deployment should still show it.
+_READONLY_BLOCKED = (
+    re.compile(r"/memories/[^/]+/revoke/?$"),    # destroys belief state
+    re.compile(r"/rewind/[^/]+/apply/?$"),       # replays decisions -> real LLM spend
+    re.compile(r"/approvals/[^/]+/resolve/?$"),  # mutates the approval queue
+)
 
 
 class UnhandledExceptionMiddleware:
@@ -69,15 +85,62 @@ class UnhandledExceptionMiddleware:
             await response(scope, receive, send)
 
 
-# Order matters: added first, so CORSMiddleware (added second, below) wraps
-# AROUND this one, not the other way around. See the class docstring above.
+class ReadOnlyMiddleware:
+    """
+    Blocks cost-incurring and destructive routes when PALIMPSEST_READONLY
+    is set. Exists because the public demo deployment's Function URL has
+    no authentication of its own: without this, anyone with the URL could
+    revoke beliefs or drive `/rewind/apply` in a loop, which makes real
+    LLM calls against a real, metered API key.
+
+    Raw ASGI rather than BaseHTTPMiddleware for the same reason
+    UnhandledExceptionMiddleware is (see below): it must sit INSIDE
+    CORSMiddleware so the 403 it returns still carries CORS headers, or
+    the console reports it to the user as an opaque network failure
+    instead of a readable "disabled on the public demo" message.
+    """
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or not READONLY:
+            await self.app(scope, receive, send)
+            return
+        path = scope.get("path", "")
+        if scope.get("method") in ("POST", "PUT", "PATCH", "DELETE") and any(
+            p.search(path) for p in _READONLY_BLOCKED
+        ):
+            logger.info("readonly: blocked %s %s", scope.get("method"), path)
+            response = JSONResponse(
+                status_code=403,
+                content={
+                    "detail": (
+                        "This endpoint is disabled on the public read-only demo deployment "
+                        "because it destroys belief state or makes metered LLM calls. "
+                        "Clone the repo and run it locally to exercise the full write path — "
+                        "see docs/SETUP.md."
+                    ),
+                    "readonly": True,
+                },
+            )
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
+# Order matters: added first, so CORSMiddleware (added last, below) wraps
+# AROUND these, not the other way around. Starlette's add_middleware
+# PREPENDS, so whichever is added last ends up outermost.
 app.add_middleware(UnhandledExceptionMiddleware)
+app.add_middleware(ReadOnlyMiddleware)
 
 # console/ runs on a different origin during local development (Next.js
-# dev server); this is a local-dev/demo API with no auth layer of its own
-# (out of scope for the hackathon per CONTEXT.md's cut list), so an open
-# CORS policy is acceptable here — do not deploy this service
-# internet-facing without adding real authentication first.
+# dev server), so CORS is open. This service has no authentication layer
+# of its own — deliberately out of scope, and the reason the public
+# deployment runs with PALIMPSEST_READONLY=true (see ReadOnlyMiddleware
+# above). Do not deploy it internet-facing with writes enabled until real
+# authentication exists; read-only is a mitigation, not a substitute.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
