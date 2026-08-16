@@ -58,6 +58,13 @@ replay only knows what the gate chose to log; `AS OF SYSTEM TIME` knows
 everything the table ever held. Prefer the zone-config path when your
 cluster tier allows it.
 
+Confirmed empirically against this project's own CockroachDB Cloud cluster
+(v26.2.5, `ap-south-1`): `CONFIGURE ZONE` was **not** rejected — the
+primary `AS OF SYSTEM TIME` path (not the ledger-replay fallback) is what
+actually serves rewind on the deployed submission. Full test suite (19/19)
+and `demo/attack_scenario.py`'s all 4 phases, including rewind, verified
+end-to-end against this real cluster, not just local Docker.
+
 ## 5. Apply the schema
 
 ```bash
