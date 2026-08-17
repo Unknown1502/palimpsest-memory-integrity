@@ -20,18 +20,32 @@ adjudicates contradictions **atomically** inside a single CockroachDB
 `SERIALIZABLE` transaction, and can **rewind** an agent's memory to any
 past decision via `AS OF SYSTEM TIME` — finding every decision a
 poisoned belief touched and replaying them against corrected memory.
-Every piece of this — the lattice, the atomic adjudication, the retrieval
-filter, rewind end-to-end — was built and run against a real CockroachDB
-cluster with no database mocking anywhere in the test suite. The
-Bedrock-dependent paths (Titan embeddings, Claude triage/adjudication)
-were verified live too; embeddings are unaffected, and Claude calls are
-currently blocked on the development AWS account by an unrelated
-Marketplace billing issue (`INVALID_PAYMENT_INSTRUMENT`) that surfaced
-mid-build — an account-level problem, not a code one. Everywhere that
-blocked a live Claude call, verification continued with a plain
-Python function standing in for `chat()` (see the git history for Prompts
-3–5 and 8), never a change to the actual `agent/`, `api/`, or `memory/`
-code paths themselves.
+
+## Does it actually work?
+
+Twelve independently-written prompt injections, each attacking the same
+real exploit alert through a different route (direct instruction,
+authority impersonation, fake tool output, policy citation, fake prior
+review). Same database state, same alert, same model — the only variable
+is whether the gate is on:
+
+| | poisoned belief retrieved as evidence | agent suppressed a live RCE alert |
+|---|---|---|
+| **No memory-integrity layer** | **12 / 12** | **5 / 12** |
+| **Palimpsest gate enabled** | **0 / 12** | **0 / 12** |
+
+Reproduce it yourself: `python -m demo.benchmark`. Every number comes from
+live model calls against a live CockroachDB Cloud cluster — nothing
+stubbed, nothing replayed. Full table, per-payload:
+[`docs/BENCHMARK.md`](docs/BENCHMARK.md).
+
+The left column is the one that matters. The right column moves between
+runs — sometimes 5/12, sometimes 7/12 — because a model resisting an
+injection unaided is a probabilistic property that varies with phrasing
+and regresses silently the day you change models. The retrieval column
+has never moved: the gate removes the belief from the candidate set
+*before* the model is consulted, so the agent is never in a position to
+be persuaded at all.
 
 Built for the [CockroachDB × AWS Hackathon](https://cockroachdb-ai.devpost.com/) — Build with Agentic Memory.
 
@@ -268,14 +282,15 @@ Setup from scratch: [`docs/SETUP.md`](docs/SETUP.md).
   client (Claude Code, Cursor, VS Code) direct, read-only, audited access
   to run the same labeled SQL queries the console's SQL pane runs — the
   quarantine check, the ledger hash-chain verification — directly against
-  the live Cloud cluster, independent of trusting the API layer. This
-  repo was built and verified against a local CockroachDB instance
-  (`database/README.md`'s "Local development" section) via direct
-  `psycopg`/`ccloud sql` access, not the MCP Server itself; once pointed
-  at a Cloud cluster, a judge can connect the MCP Server and independently
-  re-run the exact same verification queries this repo's own tests run —
-  e.g. re-deriving `memory_ledger`'s `entry_hash` chain by hand — without
-  needing to trust the API layer's `GET /ledger/verify` response at all.
+  the live Cloud cluster, independent of trusting the API layer. The
+  benchmark and demo above run against **CockroachDB Cloud**
+  (`aws-ap-south-1`); the test suite runs against either Cloud or a local
+  single-node instance (`database/README.md`'s "Local development"
+  section). Access from this repo is direct `psycopg`; the MCP Server is
+  the path for an *independent verifier* — a judge can connect it and
+  re-run the exact verification queries the tests run, e.g. re-deriving
+  `memory_ledger`'s `entry_hash` chain by hand, without needing to trust
+  this project's `GET /ledger/verify` response at all.
 - **`ccloud` CLI** — cluster lifecycle and on-demand backups (see
   [`database/README.md`](database/README.md) step 6 for the exact
   commands: `ccloud backup create`, `ccloud backup list`).
@@ -343,7 +358,8 @@ python -m agent.bedrock_client      # confirm Titan embeddings work
 pytest -q                           # 19 tests, real DB, zero mocks
 
 python -m demo.seed                 # prints a workspace_id
-python -m demo.attack_scenario      # the 4-phase demo
+python -m demo.attack_scenario      # the 4-phase narrated demo
+python -m demo.benchmark            # 12 injections x 2 conditions, the numbers above
 ```
 
 Then, in two terminals:
@@ -395,14 +411,59 @@ fires and every thread still succeeds.
 
 </details>
 
-The full test suite — 17 tests, zero mocked database access anywhere,
+The full test suite — 19 tests, zero mocked database access anywhere,
 Bedrock mocked only in the two tests that specifically need a
 deterministic tie-break — is under [`tests/`](tests/).
 
 ## Demo
 
-- Live demo URL: _TODO — add before submission_
+- **Live API + console:** https://qdg44lpmj5453efvl44xh6mkpm0zvqbd.lambda-url.us-east-1.on.aws/
+  — deployed read-only (`PALIMPSEST_READONLY=true`), so destructive and
+  metered routes are blocked while everything else is explorable.
+  Interactive API docs at [`/docs`](https://qdg44lpmj5453efvl44xh6mkpm0zvqbd.lambda-url.us-east-1.on.aws/docs).
+- **Reproduce the headline result:** `python -m demo.benchmark`
+- **The narrated attack, 4 phases:** `python -m demo.attack_scenario`
 - Video (<3 min, YouTube/Vimeo, public): _TODO — add before submission_
+
+### Verify the live deployment yourself, in 30 seconds
+
+No clone, no credentials — these run against the deployed Lambda talking
+to a real CockroachDB Cloud cluster:
+
+```bash
+URL=https://qdg44lpmj5453efvl44xh6mkpm0zvqbd.lambda-url.us-east-1.on.aws
+
+curl $URL/health
+# {"status":"ok","readonly":true}
+
+WS=$(curl -s $URL/demo-workspace | python -c "import sys,json;print(json.load(sys.stdin)['workspace_id'])")
+
+# Re-derive the SHA-256 ledger hash chain server-side:
+curl $URL/workspaces/$WS/ledger/verify
+# {"valid":true,"broken_at_seq":null,"entries_checked":3}
+
+# Every belief, with the source authority and capability ceiling that gate it:
+curl $URL/workspaces/$WS/memories
+```
+
+Don't want to trust `/ledger/verify`'s own answer? That's the point of the
+CockroachDB Cloud Managed MCP Server — connect it and re-derive the chain
+yourself in SQL, without this project's API in the loop at all.
+
+## Known limitations
+
+- **Claude runs through the direct Anthropic API, not Bedrock, in the
+  deployed stack.** Claude-via-Bedrock hit an unrelated AWS Marketplace
+  billing issue (`INVALID_PAYMENT_INSTRUMENT`) on the development account
+  mid-build — an account-level problem, not a code one. Rather than work
+  around it, [`agent/llm.py`](agent/llm.py) makes the provider a one-line
+  switch (`PALIMPSEST_LLM_PROVIDER=bedrock|anthropic_api`) and both paths
+  are implemented. Titan embeddings were never affected and always run on
+  Bedrock.
+- **Single-region.** `REGIONAL BY ROW` is designed for and documented, not
+  built — see the roadmap below.
+- **`act()` is a stub.** No real SOAR integration; approved verdicts are
+  logged, not executed.
 
 ## Roadmap
 
