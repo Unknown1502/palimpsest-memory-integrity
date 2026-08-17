@@ -32,3 +32,6 @@ Thumbs.db
 # Local CockroachDB data (if run outside Docker)
 cockroach-data/
 infrastructure/cdk-outputs.json
+
+# Local-only narrated walkthrough (not part of the repo)
+demo.html
