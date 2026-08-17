@@ -144,6 +144,59 @@ export interface Approval {
   resolved_at: string | null;
 }
 
+/**
+ * Audit types mirror api/routes/audit.py, which serves audit/auditor.py.
+ *
+ * `sql` on each check is the literal query that produced `rows`. It is shown
+ * in the UI on purpose: the console displaying a number is convenience, and
+ * a viewer re-running that query against the CockroachDB Cloud Managed MCP
+ * Server is the part that actually carries trust.
+ */
+export interface AuditCheck {
+  name: string;
+  question: string;
+  kind: "violation" | "inventory";
+  count: number;
+  is_violation: boolean;
+  rows: Record<string, unknown>[];
+  truncated: boolean;
+  sql: string | null;
+}
+
+export interface AuditMetrics {
+  active_memories: number;
+  revoked_memories: number;
+  quarantined_memories: number;
+  superseded_memories: number;
+  decisions: number;
+  pending_approvals: number;
+  decisions_touching_revoked: number;
+  integrity_violations: number;
+  unresolved_contradictions: number;
+}
+
+export interface AuditReport {
+  workspace_id: string;
+  passed: boolean;
+  metrics: AuditMetrics;
+  ledger: {
+    valid: boolean;
+    entries_checked: number;
+    broken_at_seq: number | null;
+    sql: string;
+  };
+  checks: AuditCheck[];
+  errors: string[];
+}
+
+export interface AuditQueries {
+  workspace_id: string;
+  note: string;
+  metrics_sql: string;
+  ledger_sql: string;
+  checks: { name: string; question: string; kind: string; sql: string }[];
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -213,6 +266,11 @@ export const api = {
 
   verifyLedger: (workspaceId: string) =>
     request<LedgerVerifyResult>(`/workspaces/${workspaceId}/ledger/verify`),
+
+  audit: (workspaceId: string) => request<AuditReport>(`/workspaces/${workspaceId}/audit`),
+
+  auditQueries: (workspaceId: string) =>
+    request<AuditQueries>(`/workspaces/${workspaceId}/audit/queries`),
 };
 
 /**

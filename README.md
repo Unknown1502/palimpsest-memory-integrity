@@ -37,7 +37,7 @@ is whether the gate is on:
 
 | | poisoned belief retrieved as evidence | agent suppressed a live RCE alert |
 |---|---|---|
-| **No memory-integrity layer** | **12 / 12** | **5 / 12** |
+| **No memory-integrity layer** | **12 / 12** | **7 / 12** |
 | **Palimpsest gate enabled** | **0 / 12** | **0 / 12** |
 
 Reproduce it yourself: `python -m demo.benchmark`. Every number comes from
@@ -46,12 +46,16 @@ stubbed, nothing replayed. Full table, per-payload:
 [`docs/BENCHMARK.md`](docs/BENCHMARK.md).
 
 The left column is the one that matters. The right column moves between
-runs — sometimes 5/12, sometimes 7/12 — because a model resisting an
-injection unaided is a probabilistic property that varies with phrasing
-and regresses silently the day you change models. The retrieval column
-has never moved: the gate removes the belief from the candidate set
-*before* the model is consulted, so the agent is never in a position to
-be persuaded at all.
+runs — 7, then 5, then 7 across three consecutive runs — because a model
+resisting an injection unaided is a probabilistic property that varies
+with phrasing and regresses silently the day you change models. That
+instability is the argument, not a caveat: it is exactly the thing you
+cannot build a security control on.
+
+The retrieval column has never moved, in any run. The gate removes the
+belief from the candidate set *before* the model is consulted, so the
+agent is never in a position to be persuaded at all — and unlike the
+right column, that does not depend on which model you point at it.
 
 ## Don't trust this project — verify it independently
 
@@ -133,7 +137,7 @@ flowchart TB
     API["<b>api/main.py</b><br/>FastAPI service"]
     REP["<b>memory/ledger_replay.py</b><br/>fallback when AS OF SYSTEM TIME<br/>is unavailable"]
     LLM["<b>agent/llm.py</b> — provider switch<br/>Bedrock Titan embeddings always;<br/>chat via Bedrock or Anthropic API"]
-    CON["<b>console/</b> (Next.js)<br/>/timeline · /memories · /rewind"]
+    CON["<b>console/</b> (Next.js)<br/>control plane · timeline · memories<br/>rewind · benchmark · proof"]
     AUD["<b>audit/auditor.py</b><br/>INDEPENDENT AUDITOR<br/>read-only enforced by CockroachDB;<br/>imports nothing from memory/"]
 
     S1 & S2 & S3 --> ING
@@ -343,6 +347,22 @@ Setup from scratch: [`docs/SETUP.md`](docs/SETUP.md).
 - **`ccloud` CLI** — cluster lifecycle and on-demand backups (see
   [`database/README.md`](database/README.md) step 6 for the exact
   commands: `ccloud backup create`, `ccloud backup list`).
+  [`audit/dbops.py`](audit/dbops.py) wraps the read-only half of that into
+  an operational readiness check — cluster version, whether
+  `feature.vector_index.enabled` is actually on, that the vector index
+  exists, that `AS OF SYSTEM TIME` answers (rewind depends on it), schema
+  completeness, and backup availability. It invokes only `cluster list`
+  and `backup list`; there is deliberately no path from this module to a
+  destructive `ccloud` subcommand, because the public demo is
+  unauthenticated. When the CLI is absent or logged out, those checks
+  report `SKIP` with the reason rather than inventing output — a readiness
+  report that fabricates a backup is worse than none
+  ([test](tests/test_dbops.py)).
+
+Which gives the four tools distinct jobs rather than overlapping ones:
+**MCP** is data interaction, **Agent Skills** is portable database
+expertise, **`ccloud`** is infrastructure operations, and **CockroachDB**
+is the system of record underneath all three.
 - **Agent Skills Repo** — `skills/audit-agent-memory-integrity/SKILL.md`
   is an upstream contribution prepared for
   `cockroachlabs/cockroachdb-skills` (security-and-governance domain): a
@@ -404,13 +424,14 @@ docker exec palimpsest-crdb ./cockroach sql --insecure \
 
 python database/migrate.py          # apply schema
 python -m agent.bedrock_client      # confirm Titan embeddings work
-pytest -q                           # 27 tests, real DB, zero mocks
+pytest -q                           # 43 tests, real DB, zero mocks
 
 python -m demo.seed                 # prints a workspace_id
 python -m demo.grand_prize          # THE demo: 5 acts, end to end, ~30s
 python -m demo.attack_scenario      # the earlier 4-phase narrated demo
 python -m demo.benchmark            # 12 injections x 2 conditions, the numbers above
 python -m audit.auditor             # independent read-only audit
+python -m audit.dbops               # cluster operational readiness
 ```
 
 Then, in two terminals:
@@ -423,6 +444,23 @@ cd console && npm install && npm run dev      # console → localhost:3000
 Paste the `workspace_id` from `demo.seed` into the field in the console's
 top-right corner. For the AWS-deployed version, see
 [`infrastructure/README.md`](infrastructure/README.md).
+
+### The console
+
+A memory-integrity control plane, not a chat window:
+
+| Route | What it shows |
+|---|---|
+| `/` | **Control plane** — active beliefs, policy violations, unresolved contradictions, revoked beliefs, decisions that cited them, ledger status. Every tile expands to the SQL that produced it. |
+| `/timeline` | Every decision, and which beliefs influenced it with what weight. |
+| `/memories` | Every belief with its source authority, capability ceiling, and status. Revoke from here. |
+| `/rewind` | Blast radius, `AS OF SYSTEM TIME` belief diff, replay, verdict flips. |
+| `/benchmark` | The 12-payload result, with run metadata so a stale number can't pass as current. |
+| `/proof` | Schema-level evidence quoted from `database/schema.sql`, the MCP query handoff, and what each AWS service actually does. |
+
+Numbers on `/` come from `GET /workspaces/{id}/audit`, which runs the
+independent auditor. The console displaying a number is convenience; the
+SQL shipped alongside it is what lets you leave and re-derive it.
 
 ## Proof, not just claims
 
@@ -462,7 +500,7 @@ fires and every thread still succeeds.
 
 </details>
 
-The full test suite — 27 tests, zero mocked database access anywhere,
+The full test suite — 43 tests, zero mocked database access anywhere,
 Bedrock mocked only in the two tests that specifically need a
 deterministic tie-break — is under [`tests/`](tests/). That includes
 [`tests/test_auditor.py`](tests/test_auditor.py), which asserts against a

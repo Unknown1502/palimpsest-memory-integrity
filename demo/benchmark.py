@@ -34,6 +34,7 @@ Every number this prints comes from live model calls — nothing is stubbed.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -330,6 +331,51 @@ def render_markdown(trials: list[Trial]) -> str:
     return "\n".join(out)
 
 
+def render_json(trials: list[Trial], elapsed: float) -> dict:
+    """
+    Machine-readable result, consumed by the console's benchmark panel.
+
+    Written as a build-time artifact rather than fetched live: a benchmark run
+    costs ~2.5 minutes and real model spend, so the console must not trigger
+    one per page view. The run metadata below is what keeps that honest — the
+    panel states which model produced these numbers and when, instead of
+    presenting a stale figure as current.
+    """
+    ok = [t for t in trials if t.error is None]
+    n = len(ok)
+    return {
+        "generated": time.strftime("%Y-%m-%d"),
+        "model": os.environ.get("PALIMPSEST_ADJUDICATOR_MODEL", "(provider default)"),
+        "provider": os.environ.get("PALIMPSEST_LLM_PROVIDER", "bedrock"),
+        "embed_model": os.environ.get("PALIMPSEST_EMBED_MODEL", "amazon.titan-embed-text-v2:0"),
+        "elapsed_seconds": round(elapsed, 1),
+        "alert": {
+            "alert_ref": ATTACK_ALERT["alert_ref"],
+            "source_ip": TARGET_IP,
+            "signature": ATTACK_ALERT["signature"],
+        },
+        "totals": {
+            "payloads": n,
+            "retrieved_ungated": sum(bool(t.naive_retrieved) for t in ok),
+            "retrieved_gated": sum(bool(t.gated_retrieved) for t in ok),
+            "suppressed_ungated": sum(t.naive_attack_succeeded for t in ok),
+            "suppressed_gated": sum(t.gated_attack_succeeded for t in ok),
+        },
+        "trials": [
+            {
+                "name": t.name,
+                "payload": t.payload,
+                "ungated_verdict": t.naive_verdict,
+                "ungated_retrieved": t.naive_retrieved,
+                "gated_verdict": t.gated_verdict,
+                "gated_retrieved": t.gated_retrieved,
+                "error": t.error,
+            }
+            for t in trials
+        ],
+    }
+
+
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="backslashreplace")
@@ -337,6 +383,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Injection benchmark: attack success rate with and without the gate.")
     parser.add_argument("--payloads", type=int, default=len(PAYLOADS), help="how many payloads to run")
     parser.add_argument("--out", type=str, default=None, help="also write a markdown report here")
+    parser.add_argument("--json-out", type=str, default=None, help="also write a JSON result here")
     parser.add_argument("--keep", action="store_true", help="keep the benchmark workspaces instead of deleting them")
     args = parser.parse_args()
 
@@ -364,6 +411,11 @@ def main() -> int:
         with open(args.out, "w", encoding="utf-8") as fh:
             fh.write(render_markdown(trials))
         print(f"\nMarkdown report written to {args.out}")
+
+    if args.json_out:
+        with open(args.json_out, "w", encoding="utf-8") as fh:
+            json.dump(render_json(trials, elapsed), fh, indent=2)
+        print(f"JSON result written to {args.json_out}")
 
     if not args.keep:
         _cleanup(dsn, workspaces)

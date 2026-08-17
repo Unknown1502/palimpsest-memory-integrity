@@ -5,10 +5,16 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useWorkspace } from "./workspace-context";
 
+// The control plane lives at "/" because that is what the deployed Function
+// URL serves: a visitor clicking the demo link should land on the integrity
+// summary, not on a sub-page they have to discover.
 const LINKS = [
+  { href: "/", label: "Control Plane", exact: true },
   { href: "/timeline", label: "Timeline" },
   { href: "/memories", label: "Memories" },
   { href: "/rewind", label: "Rewind" },
+  { href: "/benchmark", label: "Benchmark" },
+  { href: "/proof", label: "Proof" },
 ];
 
 export function NavBar() {
@@ -37,7 +43,11 @@ export function NavBar() {
 
         <nav className="flex items-center gap-1">
           {LINKS.map((link) => {
-            const isActive = pathname?.startsWith(link.href);
+            // trailingSlash: true means "/" arrives as "/" and "/proof" as
+            // "/proof/", so normalize before comparing. Without the exact
+            // flag, startsWith("/") would light up every link at once.
+            const path = pathname?.replace(/\/$/, "") || "/";
+            const isActive = link.exact ? path === "/" : path.startsWith(link.href);
             return (
               <Link
                 key={link.href}
