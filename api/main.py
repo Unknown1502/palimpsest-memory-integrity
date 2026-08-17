@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from api import landing
-from api.routes import approvals, decisions, ledger, memories, rewind
+from api.routes import approvals, audit, decisions, ledger, memories, rewind
 
 logger = logging.getLogger("palimpsest.api")
 
@@ -155,6 +155,7 @@ app.include_router(memories.router)
 app.include_router(approvals.router)
 app.include_router(rewind.router)
 app.include_router(ledger.router)
+app.include_router(audit.router)
 
 
 @app.get("/health")
