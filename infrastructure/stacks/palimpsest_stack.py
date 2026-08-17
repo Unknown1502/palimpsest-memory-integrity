@@ -61,6 +61,7 @@ CLAUDE_MODEL_ID = "anthropic.claude-haiku-4-5-20251001-v1:0"
 ANTHROPIC_API_MODEL_ID = "claude-haiku-4-5"
 
 VALID_LLM_PROVIDERS = ("bedrock", "anthropic_api")
+VALID_EMBED_PROVIDERS = ("bedrock", "local")
 
 # A CockroachDB Cloud DSN uses sslmode=verify-full, which makes libpq verify
 # the server certificate against a CA file. The Lambda runtime has no
@@ -124,6 +125,15 @@ class PalimpsestStack(Stack):
         # `-c readonly=true`    -> api/main.py blocks destructive/metered routes
         public_url = _ctx_bool(self.node.try_get_context("public_url"), default=False)
         readonly = _ctx_bool(self.node.try_get_context("readonly"), default=False)
+
+        # Which provider serves embed(). Validated at synth for the same
+        # reason llm_provider is: a typo should fail the deploy, not produce
+        # a Lambda that raises on its first retrieval.
+        embed_provider = self.node.try_get_context("embed_provider") or "bedrock"
+        if embed_provider not in VALID_EMBED_PROVIDERS:
+            raise ValueError(
+                f"embed_provider context value {embed_provider!r} is not one of {VALID_EMBED_PROVIDERS}"
+            )
 
         # Safety interlock. A publicly-reachable Function URL in front of an API
         # with no authentication of its own means anyone who finds the URL can
@@ -271,6 +281,18 @@ class PalimpsestStack(Stack):
                 # no auth layer of its own, so the public deployment disables
                 # the routes that destroy belief state or spend real LLM credit.
                 "PALIMPSEST_READONLY": "true" if readonly else "false",
+                # Which provider serves embed() -- see agent/llm.py. Set
+                # explicitly for the same reason as the chat provider above:
+                # the deployed behavior should be readable in the template.
+                #
+                # `-c embed_provider=local` matters on a fresh AWS account,
+                # where Bedrock model access has not been granted yet: Titan
+                # returns AccessDeniedException until it is enabled in the
+                # console, per account and per region. The read-only public
+                # demo never embeds anything (every exposed route is a
+                # database read), so `local` costs it nothing and removes a
+                # deploy-time dependency on a manual console step.
+                "PALIMPSEST_EMBED_PROVIDER": embed_provider,
                 "PGSSLROOTCERT": PGSSLROOTCERT,
             },
             log_group=gate_log_group,
