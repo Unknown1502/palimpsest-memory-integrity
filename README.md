@@ -1,8 +1,14 @@
-# Palimpsest
+# Palimpsest — Memory Integrity for AI Agents
 
 ![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)
 
-A memory integrity layer for AI agents.
+**Prevent low-trust information from becoming high-authority agent memory.**
+
+> **Memory is not merely data. Memory is authority.**
+>
+> We don't try to make the model better at resisting poisoned memory. We make
+> poisoned memory **incapable of acquiring authority in the first place**.
+> The model may propose a belief. It may not decide how far to trust it.
 
 ## Why this exists
 
@@ -47,6 +53,45 @@ has never moved: the gate removes the belief from the candidate set
 *before* the model is consulted, so the agent is never in a position to
 be persuaded at all.
 
+## Don't trust this project — verify it independently
+
+`GET /ledger/verify` is the API grading its own homework. A compromised or
+simply buggy application layer returns `{"valid": true}` just as happily as
+a correct one.
+
+So [`audit/auditor.py`](audit/auditor.py) is a separate read-only Memory
+Auditor that shares **no code** with the gate it audits:
+
+- **Read-only is enforced by CockroachDB, not by us.** Every auditor
+  connection opens with `SET default_transaction_read_only = on`, so a
+  write is refused by the server with `ReadOnlySqlTransaction` — not by an
+  `if` statement a later refactor could drop.
+  ([test](tests/test_auditor.py))
+- **It restates the integrity policy instead of importing it.** An auditor
+  that imports `memory/lattice.py`'s definition of "correct" cannot detect
+  a *wrong* definition — it would agree with the bug. The duplication is
+  the point; if the two copies ever disagree, that disagreement is the
+  finding.
+- **It re-derives the ledger hash chain** from its own genesis constant and
+  its own canonicalization, and detects a tampered payload
+  ([test](tests/test_auditor.py)).
+- **Every check is a labeled SQL string.** `python -m audit.auditor
+  --print-sql` emits all of them, ready to paste into any MCP client
+  pointed at the **CockroachDB Cloud Managed MCP Server** — so a third
+  party can re-run the exact verification with this repo entirely out of
+  the loop.
+
+```bash
+python -m audit.auditor              # human-readable report
+python -m audit.auditor --json       # the metrics the console renders
+python -m audit.auditor --print-sql  # the queries, to run yourself via MCP
+```
+
+The payoff is in [`demo/grand_prize.py`](demo/grand_prize.py)'s final act:
+the gate reports a blast radius, the auditor independently derives the same
+number from raw rows, and they agree. Anything can print `VERIFIED`. Two
+systems sharing no code arriving at the same number is evidence.
+
 Built for the [CockroachDB × AWS Hackathon](https://cockroachdb-ai.devpost.com/) — Build with Agentic Memory.
 
 ## Architecture
@@ -89,6 +134,7 @@ flowchart TB
     REP["<b>memory/ledger_replay.py</b><br/>fallback when AS OF SYSTEM TIME<br/>is unavailable"]
     LLM["<b>agent/llm.py</b> — provider switch<br/>Bedrock Titan embeddings always;<br/>chat via Bedrock or Anthropic API"]
     CON["<b>console/</b> (Next.js)<br/>/timeline · /memories · /rewind"]
+    AUD["<b>audit/auditor.py</b><br/>INDEPENDENT AUDITOR<br/>read-only enforced by CockroachDB;<br/>imports nothing from memory/"]
 
     S1 & S2 & S3 --> ING
     ING -->|"Claim + Provenance"| GATE
@@ -97,6 +143,7 @@ flowchart TB
     TRI --> LLM
     API --> CON
     API -.-> REP
+    CRDB -->|"SET default_transaction_read_only = on<br/>(never through the API)"| AUD
 
     classDef danger fill:#3b1219,stroke:#b4304a,color:#f5d0d7
     classDef gate fill:#0e2a33,stroke:#2bb3c9,color:#d6f4fb
@@ -287,10 +334,12 @@ Setup from scratch: [`docs/SETUP.md`](docs/SETUP.md).
   (`aws-ap-south-1`); the test suite runs against either Cloud or a local
   single-node instance (`database/README.md`'s "Local development"
   section). Access from this repo is direct `psycopg`; the MCP Server is
-  the path for an *independent verifier* — a judge can connect it and
-  re-run the exact verification queries the tests run, e.g. re-deriving
-  `memory_ledger`'s `entry_hash` chain by hand, without needing to trust
-  this project's `GET /ledger/verify` response at all.
+  the path for an *independent verifier*. [`audit/auditor.py`](audit/auditor.py)
+  is built for exactly that handoff: `--print-sql` emits every labeled,
+  read-only check it runs, so a judge can paste them into an MCP client and
+  re-derive the same findings — including `memory_ledger`'s `entry_hash`
+  chain — without trusting this project's `GET /ledger/verify`, or the
+  auditor itself, at all.
 - **`ccloud` CLI** — cluster lifecycle and on-demand backups (see
   [`database/README.md`](database/README.md) step 6 for the exact
   commands: `ccloud backup create`, `ccloud backup list`).
@@ -355,11 +404,13 @@ docker exec palimpsest-crdb ./cockroach sql --insecure \
 
 python database/migrate.py          # apply schema
 python -m agent.bedrock_client      # confirm Titan embeddings work
-pytest -q                           # 19 tests, real DB, zero mocks
+pytest -q                           # 27 tests, real DB, zero mocks
 
 python -m demo.seed                 # prints a workspace_id
-python -m demo.attack_scenario      # the 4-phase narrated demo
+python -m demo.grand_prize          # THE demo: 5 acts, end to end, ~30s
+python -m demo.attack_scenario      # the earlier 4-phase narrated demo
 python -m demo.benchmark            # 12 injections x 2 conditions, the numbers above
+python -m audit.auditor             # independent read-only audit
 ```
 
 Then, in two terminals:
@@ -411,9 +462,13 @@ fires and every thread still succeeds.
 
 </details>
 
-The full test suite — 19 tests, zero mocked database access anywhere,
+The full test suite — 27 tests, zero mocked database access anywhere,
 Bedrock mocked only in the two tests that specifically need a
-deterministic tie-break — is under [`tests/`](tests/).
+deterministic tie-break — is under [`tests/`](tests/). That includes
+[`tests/test_auditor.py`](tests/test_auditor.py), which asserts against a
+live cluster that the auditor's connection is refused write access by
+CockroachDB itself, and that a tampered ledger payload breaks the chain at
+the exact sequence number.
 
 ## Demo
 
@@ -421,8 +476,13 @@ deterministic tie-break — is under [`tests/`](tests/).
   — deployed read-only (`PALIMPSEST_READONLY=true`), so destructive and
   metered routes are blocked while everything else is explorable.
   Interactive API docs at [`/docs`](https://qdg44lpmj5453efvl44xh6mkpm0zvqbd.lambda-url.us-east-1.on.aws/docs).
+- **The full narrated proof, one command (~30s):** `python -m demo.grand_prize`
+  — five acts: the lattice blocks a suppressive claim with zero database
+  writes, the gate defeats the attack, an ungated agent is poisoned by it,
+  rewind finds and replays every affected decision, and an independent
+  read-only audit derives the same blast radius on its own.
 - **Reproduce the headline result:** `python -m demo.benchmark`
-- **The narrated attack, 4 phases:** `python -m demo.attack_scenario`
+- **Independent audit:** `python -m audit.auditor`
 - Video (<3 min, YouTube/Vimeo, public): _TODO — add before submission_
 
 ### Verify the live deployment yourself, in 30 seconds
