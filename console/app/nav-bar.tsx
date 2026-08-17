@@ -10,6 +10,7 @@ import { useWorkspace } from "./workspace-context";
 // summary, not on a sub-page they have to discover.
 const LINKS = [
   { href: "/", label: "Control Plane", exact: true },
+  { href: "/attack", label: "Attack" },
   { href: "/timeline", label: "Timeline" },
   { href: "/memories", label: "Memories" },
   { href: "/rewind", label: "Rewind" },

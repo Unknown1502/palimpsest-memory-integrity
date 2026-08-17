@@ -137,7 +137,7 @@ flowchart TB
     API["<b>api/main.py</b><br/>FastAPI service"]
     REP["<b>memory/ledger_replay.py</b><br/>fallback when AS OF SYSTEM TIME<br/>is unavailable"]
     LLM["<b>agent/llm.py</b> — provider switch<br/>Bedrock Titan embeddings always;<br/>chat via Bedrock or Anthropic API"]
-    CON["<b>console/</b> (Next.js)<br/>control plane · timeline · memories<br/>rewind · benchmark · proof"]
+    CON["<b>console/</b> (Next.js)<br/>control plane · attack · timeline<br/>memories · rewind · benchmark · proof"]
     AUD["<b>audit/auditor.py</b><br/>INDEPENDENT AUDITOR<br/>read-only enforced by CockroachDB;<br/>imports nothing from memory/"]
 
     S1 & S2 & S3 --> ING
@@ -359,16 +359,17 @@ Setup from scratch: [`docs/SETUP.md`](docs/SETUP.md).
   report that fabricates a backup is worse than none
   ([test](tests/test_dbops.py)).
 
-Which gives the four tools distinct jobs rather than overlapping ones:
-**MCP** is data interaction, **Agent Skills** is portable database
-expertise, **`ccloud`** is infrastructure operations, and **CockroachDB**
-is the system of record underneath all three.
 - **Agent Skills Repo** — `skills/audit-agent-memory-integrity/SKILL.md`
   is an upstream contribution prepared for
   `cockroachlabs/cockroachdb-skills` (security-and-governance domain): a
   read-only skill that audits any CockroachDB-backed agent memory table
   for the same four integrity gaps this project's own schema closes.
   Exact PR steps: [`docs/SKILLS_PR.md`](docs/SKILLS_PR.md).
+
+Which gives the four tools distinct jobs rather than overlapping ones:
+**MCP** is data interaction, **Agent Skills** is portable database
+expertise, **`ccloud`** is infrastructure operations, and **CockroachDB**
+is the system of record underneath all three.
 
 [`docs/COCKROACH_NOTES.md`](docs/COCKROACH_NOTES.md) collects the
 CockroachDB behavior this repo depends on, sourced against official docs
@@ -424,7 +425,7 @@ docker exec palimpsest-crdb ./cockroach sql --insecure \
 
 python database/migrate.py          # apply schema
 python -m agent.bedrock_client      # confirm Titan embeddings work
-pytest -q                           # 43 tests, real DB, zero mocks
+pytest -q                           # 59 tests, real DB, zero mocks
 
 python -m demo.seed                 # prints a workspace_id
 python -m demo.grand_prize          # THE demo: 5 acts, end to end, ~30s
@@ -452,6 +453,7 @@ A memory-integrity control plane, not a chat window:
 | Route | What it shows |
 |---|---|
 | `/` | **Control plane** — active beliefs, policy violations, unresolved contradictions, revoked beliefs, decisions that cited them, ledger status. Every tile expands to the SQL that produced it. |
+| `/attack` | **The security boundary, interactively.** Pick a source and the capability it claims; the real lattice function decides, and the database-writes figure is measured server-side. Works on the public demo because rejection happens before any connection opens. |
 | `/timeline` | Every decision, and which beliefs influenced it with what weight. |
 | `/memories` | Every belief with its source authority, capability ceiling, and status. Revoke from here. |
 | `/rewind` | Blast radius, `AS OF SYSTEM TIME` belief diff, replay, verdict flips. |
@@ -500,7 +502,7 @@ fires and every thread still succeeds.
 
 </details>
 
-The full test suite — 43 tests, zero mocked database access anywhere,
+The full test suite — 59 tests, zero mocked database access anywhere,
 Bedrock mocked only in the two tests that specifically need a
 deterministic tie-break — is under [`tests/`](tests/). That includes
 [`tests/test_auditor.py`](tests/test_auditor.py), which asserts against a

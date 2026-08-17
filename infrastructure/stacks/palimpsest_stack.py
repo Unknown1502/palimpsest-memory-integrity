@@ -226,7 +226,11 @@ class PalimpsestStack(Stack):
                         " && ".join(
                             [
                                 "pip install --no-cache-dir -r requirements.txt --target /asset-output",
-                                "cp -r memory agent api /asset-output/",
+                                # `audit` is required, not optional: api/routes/audit.py
+                                # imports audit.auditor, so omitting it makes the
+                                # deployed function fail at import time -- a total
+                                # outage, not a degraded feature.
+                                "cp -r memory agent api audit /asset-output/",
                                 "cp infrastructure/lambda/gate_handler/handler.py /asset-output/handler.py",
                                 # CA bundle for sslmode=verify-full -- see PGSSLROOTCERT above.
                                 f"cp infrastructure/{CA_CERT_FILENAME} /asset-output/{CA_CERT_FILENAME}",

@@ -197,6 +197,23 @@ export interface AuditQueries {
   checks: { name: string; question: string; kind: string; sql: string }[];
 }
 
+export interface CapabilitySimulation {
+  text: string;
+  source_kind: string;
+  integrity_level: number;
+  integrity_name: string;
+  requested_capability: string;
+  required_integrity_level: number;
+  required_integrity_name: string;
+  allowed: boolean;
+  result: "ALLOWED" | "BLOCKED";
+  error_type: string | null;
+  error: string | null;
+  /** Measured server-side by counting rows before and after — not a constant. */
+  database_writes: { memories: number; memory_ledger: number };
+  note: string;
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -271,6 +288,17 @@ export const api = {
 
   auditQueries: (workspaceId: string) =>
     request<AuditQueries>(`/workspaces/${workspaceId}/audit/queries`),
+
+  simulateCapability: (
+    workspaceId: string,
+    sourceKind: string,
+    capability: string,
+    text: string,
+  ) =>
+    request<CapabilitySimulation>(`/workspaces/${workspaceId}/simulate/capability`, {
+      method: "POST",
+      body: JSON.stringify({ source_kind: sourceKind, capability, text }),
+    }),
 };
 
 /**
