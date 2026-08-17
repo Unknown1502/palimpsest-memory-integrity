@@ -334,10 +334,11 @@ Setup from scratch: [`docs/SETUP.md`](docs/SETUP.md).
   to run the same labeled SQL queries the console's SQL pane runs — the
   quarantine check, the ledger hash-chain verification — directly against
   the live Cloud cluster, independent of trusting the API layer. The
-  benchmark and demo above run against **CockroachDB Cloud**
+  benchmark and demo above run against **CockroachDB Cloud v26.2.5**
   (`aws-ap-south-1`); the test suite runs against either Cloud or a local
-  single-node instance (`database/README.md`'s "Local development"
-  section). Access from this repo is direct `psycopg`; the MCP Server is
+  single-node instance, which the setup below pins to **v25.2** (the
+  verbatim 40001 retry output further down was captured there, hence the
+  v25.2 links in it). Access from this repo is direct `psycopg`; the MCP Server is
   the path for an *independent verifier*. [`audit/auditor.py`](audit/auditor.py)
   is built for exactly that handoff: `--print-sql` emits every labeled,
   read-only check it runs, so a judge can paste them into an MCP client and
