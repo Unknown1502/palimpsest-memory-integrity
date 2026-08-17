@@ -18,7 +18,15 @@ import uuid
 
 import psycopg
 
-from agent.bedrock_client import DEFAULT_CLAUDE_MODEL, embed
+# embed() comes from agent.llm, not agent.bedrock_client, so seeding honors
+# PALIMPSEST_EMBED_PROVIDER like every other caller. Importing it directly
+# from bedrock_client meant seed() reached for AWS even when the rest of the
+# system was configured to run without it -- which made the whole demo
+# unrunnable during the account suspension, at the very first step.
+# DEFAULT_CLAUDE_MODEL is only a string label recorded on the agent row, so
+# it stays where it is defined.
+from agent.bedrock_client import DEFAULT_CLAUDE_MODEL
+from agent.llm import embed
 from memory.gate import Claim, MemoryGate, Provenance
 from memory.lattice import Capability
 

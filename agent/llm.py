@@ -29,6 +29,31 @@ else:
         f"unknown PALIMPSEST_LLM_PROVIDER={_provider!r}; expected 'bedrock' or 'anthropic_api'"
     )
 
-from agent.bedrock_client import embed  # always Bedrock/Titan -- see module docstring
+# Embeddings used to be hard-wired to Bedrock here, on the reasoning that
+# Titan had never been the thing that broke. That held until the AWS account
+# behind this project was suspended outright (2026-08-18), at which point
+# embed() failing took admit(), retrieve(), the attack scenario, the
+# benchmark and the demo down with it -- while chat(), which HAD a provider
+# switch, carried on untouched against the direct Anthropic API.
+#
+# The lesson is the switch, not the vendor. Embeddings now have one too:
+#
+#     PALIMPSEST_EMBED_PROVIDER=bedrock  (default) Titan Text Embeddings V2
+#     PALIMPSEST_EMBED_PROVIDER=local    agent/local_embeddings.py
+#
+# The local provider is lexical, not semantic -- read its module docstring
+# before relying on it, because paraphrase matching genuinely degrades. It
+# is a way to keep the system demonstrable without any cloud account, not a
+# claim of parity with Titan.
+_embed_provider = os.environ.get("PALIMPSEST_EMBED_PROVIDER", "bedrock").strip().lower()
+
+if _embed_provider == "local":
+    from agent.local_embeddings import embed
+elif _embed_provider == "bedrock":
+    from agent.bedrock_client import embed
+else:
+    raise RuntimeError(
+        f"unknown PALIMPSEST_EMBED_PROVIDER={_embed_provider!r}; expected 'bedrock' or 'local'"
+    )
 
 __all__ = ["chat", "adjudicate", "embed"]

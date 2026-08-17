@@ -136,7 +136,7 @@ flowchart TB
     TRI["<b>agent/triage.py</b><br/>TriageAgent — observe/decide/act"]
     API["<b>api/main.py</b><br/>FastAPI service"]
     REP["<b>memory/ledger_replay.py</b><br/>fallback when AS OF SYSTEM TIME<br/>is unavailable"]
-    LLM["<b>agent/llm.py</b> — provider switch<br/>Bedrock Titan embeddings always;<br/>chat via Bedrock or Anthropic API"]
+    LLM["<b>agent/llm.py</b> — provider switches<br/>chat: Bedrock or Anthropic API<br/>embed: Bedrock Titan or offline local"]
     CON["<b>console/</b> (Next.js)<br/>control plane · attack · timeline<br/>memories · rewind · benchmark · proof"]
     AUD["<b>audit/auditor.py</b><br/>INDEPENDENT AUDITOR<br/>read-only enforced by CockroachDB;<br/>imports nothing from memory/"]
 
@@ -424,8 +424,13 @@ docker exec palimpsest-crdb ./cockroach sql --insecure \
   -e "CREATE DATABASE IF NOT EXISTS palimpsest; SET CLUSTER SETTING feature.vector_index.enabled = true;"
 
 python database/migrate.py          # apply schema
+
+# No AWS account? Skip Bedrock entirely -- everything below still runs.
+export PALIMPSEST_EMBED_PROVIDER=local
+python -m agent.local_embeddings    # offline embedding smoke test
+# ...or, with AWS available:
 python -m agent.bedrock_client      # confirm Titan embeddings work
-pytest -q                           # 59 tests, real DB, zero mocks
+pytest -q                           # 69 tests, real DB, zero mocks
 
 python -m demo.seed                 # prints a workspace_id
 python -m demo.grand_prize          # THE demo: 5 acts, end to end, ~30s
@@ -502,7 +507,7 @@ fires and every thread still succeeds.
 
 </details>
 
-The full test suite — 59 tests, zero mocked database access anywhere,
+The full test suite — 69 tests, zero mocked database access anywhere,
 Bedrock mocked only in the two tests that specifically need a
 deterministic tie-break — is under [`tests/`](tests/). That includes
 [`tests/test_auditor.py`](tests/test_auditor.py), which asserts against a
@@ -512,10 +517,23 @@ the exact sequence number.
 
 ## Demo
 
+> ⚠️ **The hosted demo is down: the AWS account was suspended on
+> 2026-08-18**, hours after the stack deployed and verified green. Every
+> route now returns `403 {"message":"This account is suspended"}`. This is
+> an account-level billing problem — the same one that produced the
+> earlier Bedrock `INVALID_PAYMENT_INSTRUMENT` error — not a fault in the
+> deployed code, which was verified working end to end immediately before
+> (see the deploy commit).
+>
+> **Everything below runs locally without any AWS account**, using
+> `PALIMPSEST_EMBED_PROVIDER=local`. That path is the reason the project is
+> still fully demonstrable, and it is covered by tests.
+
 - **Live API + console:** https://qdg44lpmj5453efvl44xh6mkpm0zvqbd.lambda-url.us-east-1.on.aws/
   — deployed read-only (`PALIMPSEST_READONLY=true`), so destructive and
   metered routes are blocked while everything else is explorable.
   Interactive API docs at [`/docs`](https://qdg44lpmj5453efvl44xh6mkpm0zvqbd.lambda-url.us-east-1.on.aws/docs).
+  *(Currently returning 403 — see the notice above.)*
 - **The full narrated proof, one command (~30s):** `python -m demo.grand_prize`
   — five acts: the lattice blocks a suppressive claim with zero database
   writes, the gate defeats the attack, an ungated agent is poisoned by it,
@@ -552,6 +570,22 @@ yourself in SQL, without this project's API in the loop at all.
 
 ## Known limitations
 
+- **The AWS account is suspended (2026-08-18), so the hosted demo and
+  Bedrock embeddings are unavailable.** The stack deployed and verified
+  green — all console routes 200, the audit endpoint returning live data,
+  destructive routes correctly 403 — and the account went down afterwards
+  over billing. What this cost the project is instructive rather than
+  fatal: `chat()` already had a provider switch from the earlier Bedrock
+  billing failure and kept working against the direct Anthropic API, while
+  `embed()` was hard-wired to Titan on the reasoning that embeddings had
+  never been the thing that broke — and that single import took the whole
+  demo down. Embeddings now have the same switch
+  (`PALIMPSEST_EMBED_PROVIDER=bedrock|local`), and
+  [`agent/local_embeddings.py`](agent/local_embeddings.py) runs the entire
+  system with no cloud account: `demo.grand_prize` passes all five acts,
+  the benchmark runs, the console works. The local provider scores lexical
+  overlap rather than meaning, so paraphrase matching genuinely degrades —
+  that trade is documented in the module, not glossed.
 - **Claude runs through the direct Anthropic API, not Bedrock, in the
   deployed stack.** Claude-via-Bedrock hit an unrelated AWS Marketplace
   billing issue (`INVALID_PAYMENT_INSTRUMENT`) on the development account
