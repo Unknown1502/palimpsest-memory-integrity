@@ -91,7 +91,7 @@ python -m audit.auditor --json       # the metrics the console renders
 python -m audit.auditor --print-sql  # the queries, to run yourself via MCP
 ```
 
-The payoff is in [`demo/grand_prize.py`](demo/grand_prize.py)'s final act:
+The payoff is in [`demo/walkthrough.py`](demo/walkthrough.py)'s final act:
 the gate reports a blast radius, the auditor independently derives the same
 number from raw rows, and they agree. Anything can print `VERIFIED`. Two
 systems sharing no code arriving at the same number is evidence.
@@ -434,7 +434,7 @@ python -m agent.bedrock_client      # confirm Titan embeddings work
 pytest -q                           # 69 tests, real DB, zero mocks
 
 python -m demo.seed                 # prints a workspace_id
-python -m demo.grand_prize          # THE demo: 5 acts, end to end, ~30s
+python -m demo.walkthrough          # THE demo: 5 acts, end to end, ~30s
 python -m demo.attack_scenario      # the earlier 4-phase narrated demo
 python -m demo.benchmark            # 12 injections x 2 conditions, the numbers above
 python -m audit.auditor             # independent read-only audit
@@ -518,24 +518,25 @@ the exact sequence number.
 
 ## Demo
 
-> ⚠️ **The hosted demo is down: the AWS account was suspended on
-> 2026-08-18**, hours after the stack deployed and verified green. Every
-> route now returns `403 {"message":"This account is suspended"}`. This is
-> an account-level billing problem — the same one that produced the
-> earlier Bedrock `INVALID_PAYMENT_INSTRUMENT` error — not a fault in the
-> deployed code, which was verified working end to end immediately before
-> (see the deploy commit).
+> **Note on the deployment history.** The original AWS account was
+> suspended over billing mid-build, which took the first hosted demo down.
+> The stack has been redeployed to a new account and the URL below is the
+> live one. Nothing about the code changed to make that work — same CDK
+> stack, same FastAPI app — which is the useful part: the deployment is
+> reproducible from `cdk deploy`, not hand-assembled.
 >
-> **Everything below runs locally without any AWS account**, using
-> `PALIMPSEST_EMBED_PROVIDER=local`. That path is the reason the project is
-> still fully demonstrable, and it is covered by tests.
+> One genuine consequence: **Bedrock is unavailable on the new account.**
+> `InvokeModel` is refused account-wide for every embedding model, Amazon
+> first-party ones included, which is a new-account restriction rather
+> than a model-access or IAM problem. So the deployment runs with
+> `PALIMPSEST_EMBED_PROVIDER=local` — see Known limitations.
 
-- **Live API + console:** https://qdg44lpmj5453efvl44xh6mkpm0zvqbd.lambda-url.us-east-1.on.aws/
+- **Live API + console:** https://6pfoxhy3vgg2im57v5asl3jqo40nxmms.lambda-url.us-east-1.on.aws/
   — deployed read-only (`PALIMPSEST_READONLY=true`), so destructive and
   metered routes are blocked while everything else is explorable.
-  Interactive API docs at [`/docs`](https://qdg44lpmj5453efvl44xh6mkpm0zvqbd.lambda-url.us-east-1.on.aws/docs).
+  Interactive API docs at [`/docs`](https://6pfoxhy3vgg2im57v5asl3jqo40nxmms.lambda-url.us-east-1.on.aws/docs).
   *(Currently returning 403 — see the notice above.)*
-- **The full narrated proof, one command (~30s):** `python -m demo.grand_prize`
+- **The full narrated proof, one command (~30s):** `python -m demo.walkthrough`
   — five acts: the lattice blocks a suppressive claim with zero database
   writes, the gate defeats the attack, an ungated agent is poisoned by it,
   rewind finds and replays every affected decision, and an independent
@@ -550,7 +551,7 @@ No clone, no credentials — these run against the deployed Lambda talking
 to a real CockroachDB Cloud cluster:
 
 ```bash
-URL=https://qdg44lpmj5453efvl44xh6mkpm0zvqbd.lambda-url.us-east-1.on.aws
+URL=https://6pfoxhy3vgg2im57v5asl3jqo40nxmms.lambda-url.us-east-1.on.aws
 
 curl $URL/health
 # {"status":"ok","readonly":true}
@@ -583,7 +584,7 @@ yourself in SQL, without this project's API in the loop at all.
   demo down. Embeddings now have the same switch
   (`PALIMPSEST_EMBED_PROVIDER=bedrock|local`), and
   [`agent/local_embeddings.py`](agent/local_embeddings.py) runs the entire
-  system with no cloud account: `demo.grand_prize` passes all five acts,
+  system with no cloud account: `demo.walkthrough` passes all five acts,
   the benchmark runs, the console works. The local provider scores lexical
   overlap rather than meaning, so paraphrase matching genuinely degrades —
   that trade is documented in the module, not glossed.

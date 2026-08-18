@@ -370,7 +370,7 @@ function NoWorkspace() {
     <div className="rounded-lg border border-dashed border-border-strong p-10 text-center">
       <p className="text-sm text-text-muted">
         No workspace selected. Run{" "}
-        <code className="font-mono-data text-accent">python -m demo.grand_prize</code> and paste
+        <code className="font-mono-data text-accent">python -m demo.walkthrough</code> and paste
         the printed <code className="font-mono-data text-accent">workspace_id</code> into the
         field in the top-right corner.
       </p>

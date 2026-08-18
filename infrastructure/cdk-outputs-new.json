@@ -1,0 +1,11 @@
+{
+  "PalimpsestStack": {
+    "GateFunctionUrl": "https://6pfoxhy3vgg2im57v5asl3jqo40nxmms.lambda-url.us-east-1.on.aws/",
+    "GateFunctionUrlAuth": "NONE (public)",
+    "DsnSecretArn": "arn:aws:secretsmanager:us-east-1:077219888989:secret:PalimpsestDsnE756209B-ylvejenaWe8q-rp4SCK",
+    "LedgerExportBucketName": "palimpseststack-ledgerexportbucket73c7baf5-yopzzipnlqgp",
+    "ApiWriteMode": "READ-ONLY (destructive + metered routes blocked)",
+    "LlmProvider": "anthropic_api",
+    "AnthropicApiKeySecretArn": "arn:aws:secretsmanager:us-east-1:077219888989:secret:PalimpsestAnthropicApiKeyCC-Poxbm3uarhCO-nPS67D"
+  }
+}

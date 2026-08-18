@@ -1,7 +1,7 @@
 """
-demo/grand_prize.py — the complete narrated scenario, in one command.
+demo/walkthrough.py — the complete narrated scenario, in one command.
 
-    python -m demo.grand_prize
+    python -m demo.walkthrough
 
 Five acts, each a claim this project makes, each proven live against a real
 CockroachDB cluster and a real model as it runs:
