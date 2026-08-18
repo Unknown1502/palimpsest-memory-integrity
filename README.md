@@ -543,7 +543,10 @@ the exact sequence number.
   read-only audit derives the same blast radius on its own.
 - **Reproduce the headline result:** `python -m demo.benchmark`
 - **Independent audit:** `python -m audit.auditor`
-- Video (<3 min, YouTube/Vimeo, public): _TODO — add before submission_
+- **Walkthrough video (2:51):** _PASTE_MAIN_VIDEO_URL_
+- **Raw terminal run, unedited (0:46):** _PASTE_TERMINAL_VIDEO_URL_ — the same
+  scenario running live in a terminal against CockroachDB Cloud, for anyone
+  who would rather watch the numbers get produced than watch them presented.
 
 ### Verify the live deployment yourself, in 30 seconds
 
