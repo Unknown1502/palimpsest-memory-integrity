@@ -126,6 +126,27 @@ class PalimpsestStack(Stack):
         public_url = _ctx_bool(self.node.try_get_context("public_url"), default=False)
         readonly = _ctx_bool(self.node.try_get_context("readonly"), default=False)
 
+        # Forces CloudFormation to update the Lambda when nothing else in the
+        # template changed.
+        #
+        # The secret values below are CloudFormation dynamic references
+        # ({{resolve:secretsmanager:...}}), which resolve at DEPLOY time and
+        # then sit frozen in the function's environment. Writing a new value
+        # into Secrets Manager does NOT update a deployed Lambda: the template
+        # text is byte-identical, so CloudFormation sees no diff, skips the
+        # resource, and the function keeps serving the value resolved on the
+        # first deploy.
+        #
+        # That bites exactly once per environment and is very confusing when it
+        # does -- the secret is unmistakably correct in the console while the
+        # API returns connection errors quoting a string nobody recognises (it
+        # is the random placeholder CDK generated when it created the empty
+        # secret container). Bumping this value changes the template, so the
+        # function is updated and the references re-resolve.
+        #
+        #     cdk deploy -c config_revision=2
+        config_revision = str(self.node.try_get_context("config_revision") or "1")
+
         # Which provider serves embed(). Validated at synth for the same
         # reason llm_provider is: a typo should fail the deploy, not produce
         # a Lambda that raises on its first retrieval.
@@ -293,6 +314,7 @@ class PalimpsestStack(Stack):
                 # database read), so `local` costs it nothing and removes a
                 # deploy-time dependency on a manual console step.
                 "PALIMPSEST_EMBED_PROVIDER": embed_provider,
+                "PALIMPSEST_CONFIG_REVISION": config_revision,
                 "PGSSLROOTCERT": PGSSLROOTCERT,
             },
             log_group=gate_log_group,
@@ -359,6 +381,7 @@ class PalimpsestStack(Stack):
             environment={
                 "PALIMPSEST_DSN": dsn_secret.secret_value.unsafe_unwrap(),
                 "PALIMPSEST_LEDGER_BUCKET": ledger_bucket.bucket_name,
+                "PALIMPSEST_CONFIG_REVISION": config_revision,
                 # Same CA-verification reason as GateHandler above -- this
                 # Lambda connects to the same cluster with the same DSN.
                 "PGSSLROOTCERT": PGSSLROOTCERT,
