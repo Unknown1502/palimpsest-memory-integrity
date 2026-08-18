@@ -1,0 +1,46 @@
+flowchart LR
+
+    SRC["<b>UNTRUSTED CONTENT</b><br/>ticket comment · tool output<br/>operator statement<br/><i>source integrity 1–4</i>"]
+
+    ING["<b>agent/ingest.py</b><br/>extract claim<br/><i>capability chosen by the<br/>caller, not by the text</i>"]
+
+    GATE["<b>MEMORY GATE</b><br/><i>the only write path</i><br/><br/><b>admit()</b> lattice check<br/>before any DB connection<br/><b>retrieve()</b> capability +<br/>integrity filter<br/><b>revoke() · blast_radius()</b><br/><b>belief_state_at()</b>"]
+
+    CRDB[("<b>COCKROACHDB CLOUD</b><br/><br/><b>memories</b> + VECTOR INDEX<br/>(workspace_id, status)<br/><b>decisions</b> + memory_refs<br/><b>memory_ledger</b> hash chain<br/>contradictions · rewinds")]
+
+    TRI["<b>agent/triage.py</b><br/>observe → decide → act<br/><i>retrieves only<br/>through the gate</i>"]
+
+    AUD["<b>INDEPENDENT AUDITOR</b><br/>audit/auditor.py<br/><br/>own read-only session<br/>imports nothing from memory/<br/>re-derives the hash chain<br/><b>MCP Server</b> handoff"]
+
+    subgraph AWS["AWS"]
+        direction TB
+        L1["<b>Lambda</b> GateHandler<br/>FastAPI + console, one origin"]
+        L2["<b>Lambda</b> LedgerExport<br/>+ <b>EventBridge</b> 5 min"]
+        SB["<b>S3</b> Object Lock<br/>governance ~7yr"]
+        SM["<b>Secrets Manager</b>"]
+        CW["<b>CloudWatch</b> 7-day"]
+        BR["<b>Bedrock</b> Titan V2<br/>embeddings"]
+    end
+
+    SRC --> ING
+    ING -->|"Claim +<br/>Provenance"| GATE
+    GATE -->|"ONE SERIALIZABLE txn<br/>real 40001 retry"| CRDB
+    CRDB -->|"AS OF SYSTEM TIME"| TRI
+    TRI -->|"replay →<br/>verdict flips"| GATE
+    CRDB ==>|"read_only = on<br/><b>never via the API</b>"| AUD
+    AWS -.->|"hosts"| GATE
+    AWS -.-> CRDB
+
+    classDef danger fill:#3b1219,stroke:#b4304a,stroke-width:2px,color:#f5d0d7
+    classDef agent fill:#12203a,stroke:#4a7fd4,stroke-width:2px,color:#d5e4fb
+    classDef gate fill:#0e2a33,stroke:#2bb3c9,stroke-width:4px,color:#d6f4fb
+    classDef db fill:#1a1630,stroke:#7b6bd6,stroke-width:4px,color:#e2ddfa
+    classDef aws fill:#2a1e08,stroke:#e08b1a,stroke-width:2px,color:#fbe6c4
+    classDef audit fill:#0f2e1c,stroke:#3fa46a,stroke-width:4px,color:#d3f5e2
+
+    class SRC danger
+    class ING,TRI agent
+    class GATE gate
+    class CRDB db
+    class AWS,L1,L2,SB,SM,CW,BR aws
+    class AUD audit
