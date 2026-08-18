@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import os
 import sys
+import textwrap
 import time
 from typing import Optional
 
@@ -75,12 +76,48 @@ def step(text: str) -> None:
 
 
 def field(label: str, value: object, indent: int = 4, width: int = 28) -> None:
-    print(f"{' ' * indent}{label:<{width}} {value}")
+    """
+    Print a label/value row, wrapping the value inside its own column.
+
+    Some values are long -- the IntegrityViolation message in Act 1 is over
+    a hundred characters, and it is the single most important line in the
+    run. Left to the terminal it breaks mid-word at whatever width the
+    window happens to be.
+    """
+    col = indent + width + 1
+    text = str(value)
+    room = max(WIDTH - col, 20)
+    if len(text) <= room:
+        print(f"{' ' * indent}{label:<{width}} {text}")
+        return
+    wrapped = textwrap.wrap(" ".join(text.split()), width=room) or [text]
+    print(f"{' ' * indent}{label:<{width}} {wrapped[0]}")
+    for line in wrapped[1:]:
+        print(f"{' ' * col}{line}")
+
+
+def wrap(text: str, indent: int) -> str:
+    """
+    Wrap narration to WIDTH here rather than letting the terminal do it.
+
+    A terminal breaking a long line at its own width swallows the space at
+    the break, so "alerts from this source" renders as "alerts fromthis
+    source". Invisible in a log, glaring in a recorded demo -- which is what
+    this script exists to produce.
+    """
+    return textwrap.fill(
+        " ".join(text.split()),
+        width=WIDTH,
+        initial_indent=" " * indent,
+        subsequent_indent=" " * indent,
+    )
 
 
 def verdict_line(label: str, ok: bool, detail: str = "") -> None:
     mark = "PASS" if ok else "FAIL"
-    print(f"\n  [{mark}] {label}" + (f"\n         {detail}" if detail else ""))
+    print(f"\n  [{mark}] {label}")
+    if detail:
+        print(wrap(detail, 9))
 
 
 # ---------------------------------------------------------------- helpers
@@ -108,7 +145,8 @@ def make_triage(dsn: str, workspace_id: str, agent_id: str, *, gate_enabled: boo
 def act1_lattice(dsn: str, gate: MemoryGate, workspace_id: str, agent_id: str) -> Optional[str]:
     act(1, "MEMORY IS AUTHORITY")
     print("\n  A ticket comment. Anyone with access to the ticket can write this.")
-    print(f'\n    "{INJECTION_TEXT}"')
+    print()
+    print(wrap(f'"{INJECTION_TEXT}"', 4))
 
     step("The text asks to influence a SUPPRESSIVE decision. Requesting exactly that:")
     field("SOURCE", "ticket_comment")
@@ -167,7 +205,7 @@ def act2_defended(dsn: str, workspace_id: str, agent_id: str, planted_id: str) -
     step("Triage runs, retrieving through the gate:")
     field("PLANTED BELIEF RETRIEVED", planted_id in retrieved)
     field("VERDICT", decision.verdict.upper())
-    field("RATIONALE", decision.rationale[:60] + ("..." if len(decision.rationale) > 60 else ""))
+    field("RATIONALE", decision.rationale[:160] + ("..." if len(decision.rationale) > 160 else ""))
 
     verdict_line(
         "The exploit stayed escalated.",
